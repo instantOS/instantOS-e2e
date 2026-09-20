@@ -32,10 +32,10 @@ jobs:
       INSTANTCLI_DIR: ${{ github.workspace }}/instantCLI
     steps:
       - name: Checkout e2e suite
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90f # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Checkout instantCLI
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90f # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: instantOS/instantCLI
           ref: ${{ inputs.product_ref || 'main' }}
