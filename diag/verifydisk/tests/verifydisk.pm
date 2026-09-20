@@ -33,7 +33,11 @@ sub run {
     assert_script_run('dd if=/dev/vda bs=512 count=1 2>/dev/null | tail -c +385 | head -c 4 | grep -q GRUB', 60);
     assert_script_run('grep -q menuentry /boot/grub/grub.cfg', 60);
     assert_script_run('test -s /boot/grub/grub.cfg', 60);
-    assert_script_run('pacman -Q linux linux-firmware grub networkmanager openssh sudo', 60);
+    # Firmware vendor splits (see casedir/tests/verify.pm): the installer
+    # ships the always-present catch-alls instead of the full meta package,
+    # and a VM without passthrough GPU/NIC vendors gets no big vendor splits.
+    assert_script_run('pacman -Q linux linux-firmware-other grub networkmanager openssh sudo', 60);
+    assert_script_run('! pacman -Q linux-firmware-nvidia linux-firmware-amdgpu', 60);
     assert_script_run('ping -c1 -W5 10.0.2.2', 120);
 
     record_info('verify', 'verification suite passed');
