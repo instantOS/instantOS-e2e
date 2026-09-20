@@ -101,6 +101,11 @@ images are shared).
   module. Keep needle crops tight to stable text, never kernel
   versions/timestamps (they change with every ISO).
 - To create a needle: `tools/make_needle.py <screenshot.png> <tag> x y w h`.
+- To see where an install spent its time:
+  `tools/analyze_install_log.py casedir/ulogs/install-install.log
+  [casedir/ulogs/install-executor.log ...]` — parses the step/slow-command
+  lines the installer prints and, when given the executor log, the full
+  per-command timeline.
 
 ## Gotchas
 

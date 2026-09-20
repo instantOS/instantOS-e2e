@@ -52,7 +52,8 @@ casedir/                os-autoinst test distribution
   needles/              PNG + JSON image fixtures
 assets/                 served to the guest (ins binary, questions file)
 diag/                   diagnostic harnesses
-tools/                  needle creation helper
+tools/                  helper scripts (needle creation, install-log
+                        timing analysis)
 docs/FINDINGS.md        research log: findings, bugs caught, gotchas
 ```
 

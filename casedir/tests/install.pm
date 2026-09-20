@@ -11,9 +11,16 @@ sub run {
     my $ins_bin = get_var('E2E_RELEASE') ? '/usr/local/bin/ins' : '/tmp/ins';
     script_run("$ins_bin arch exec -f /tmp/questions.toml > /tmp/install.log 2>&1; echo \"INSTALL_RC=\$?\" >> /tmp/install.log", 10800);
 
-    # Keep the log as an artifact and dump the interesting bits to the serial
+    # Keep the logs as artifacts and dump the interesting bits to the serial
     # console (which lands in the isotovideo log) before asserting.
     upload_logs('/tmp/install.log', failok => 1);
+    # The executor's own log records "[timestamp] RUN:" plus "DONE (Xs):" for
+    # every command it spawned, chroot steps included — the raw material for
+    # install-time profiling (tools/analyze_install_log.py). log_name keeps
+    # the two artifacts apart (both files are called install.log).
+    upload_logs('/var/log/instantos/install.log', failok => 1,
+        log_name => 'executor-install.log');
+    script_run('echo "=== timing summary ==="; grep -E "completed in|finished in" /tmp/install.log');
     script_run('echo "=== bootloader section ==="; sed -n "/Installing bootloader/,/Executing single step: Post/p" /tmp/install.log | tail -n 60');
     script_run('echo "=== install.log tail ==="; tail -n 40 /tmp/install.log');
     script_run('echo "=== errors ==="; grep -niE "error|failed|refusing" /tmp/install.log | head -n 20');

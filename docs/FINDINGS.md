@@ -382,3 +382,64 @@ packages, a few via cpan). Left as future work.
 `settings::users::ssh_keys::tests::foreign_store_targets_the_users_home` and
 `video::render::ffmpeg::compiler::tests::rendered_repeated_cuts_...` — not
 related to the e2e work, flagging for completeness.
+
+---
+
+## Where the installer's time goes (profiling, 2026-09-20)
+
+The installer now reports its own timing: every spawned command gets a
+`DONE (Xs): <cmd>` line in `/var/log/instantos/install.log` (uploaded as
+`ulogs/executor-install.log`), slow commands (>=10s) and per-step totals are
+printed to stdout (captured in `ulogs/install-install.log`). Summarize with
+`tools/analyze_install_log.py`.
+
+Full profile, TCG, 8 vCPU, before the size/duration optimizations (commit
+87bd002c's baseline, `run.sh --profile full`):
+
+| Step      | Duration | Dominated by                                   |
+|-----------|---------:|------------------------------------------------|
+| Disk      |      4s  | sfdisk + mkfs                                  |
+| Base      |  9m56s   | pacstrap 683 MiB download (firmware meta!)     |
+| Fstab     |      1s  | genfstab                                       |
+| Config    |  8m11s   | standard packages 410 MiB / 158 pkgs           |
+| Bootloader|      6s  | grub-install + grub-mkconfig                   |
+| Post      | 10m00s   | instant packages 480 MiB / 461 pkgs + theme -R |
+
+~91% of install time is package download+extract; ~1.57 GiB downloaded,
+~4.7 GiB installed, 775 packages across three transactions.
+
+After the optimizations (same profile): install 28m23s -> 22m07s:
+
+- firmware vendor splits selected by detected GPU + NIC vendors instead of
+  the `linux-firmware` meta (VM shape: pacstrap drops ~450 MiB; Base
+  9m56s -> 5m57s)
+- `linux-headers` only when a DKMS driver actually needs them
+- `ParallelDownloads = 10` (was the uncommented default 5)
+- no D-Bus stalls in the chroot (`timedatectl`/`localectl` replaced by
+  direct config writes)
+- Post 10m00s -> 9m35s, Config 8m11s -> 6m20s
+
+Considered and rejected:
+- merging the standard+instant package transactions saves ~1 min but
+  couples the Config step to the `[instant]` repo and breaks `ins arch
+  setup` reuse
+- deferring the Config-step `mkinitcpio -P` to the Post step's
+  `plymouth-set-default-theme -R` saves ~70s under TCG but was consciously
+  dropped in 87bd002c: each step should leave a bootable, consistent
+  system (encryption/btrfs hooks in the image as soon as the conf is
+  written), and the Post rebuild is then a cosmetic, warn-only nicety
+
+### The "missing Plymouth theme" that wasn't
+
+The full/encrypted profile assert
+`bsdtar -tf /boot/initramfs-linux.img | grep -q plymouth/themes/instantos`
+failed on a good install. mkinitcpio images are a leading *uncompressed*
+early-microcode cpio followed by the *zstd* main archive; bsdtar only reads
+the first segment, so the theme (present and verified — extracted manually
+and inspected) was invisible to it. The assert now uses the target's own
+`lsinitcpio`, which understands the container format. Diagnostics that
+helped: qemu-img-convert the casedir qcow2 disk, mount it, inspect
+`/boot`, `/etc/plymouth/plymouthd.conf` and the mkinitcpio plymouth hook
+(the hook embeds the theme reported by `plymouth-set-default-theme` at
+build time, so the conf must be written before the rebuild — the installer
+does this).

@@ -73,8 +73,12 @@ sub run {
     assert_script_run('grep -q menuentry /boot/grub/grub.cfg', 60);
     assert_script_run('test -s /boot/grub/grub.cfg', 60);
 
-    # Packages the plan promised
-    assert_script_run('pacman -Q linux linux-firmware grub networkmanager openssh sudo', 60);
+    # Packages the plan promised. The installer installs firmware vendor
+    # splits matching the detected hardware instead of the full meta package,
+    # so assert the always-present catch-all and — this is a VM with no
+    # passthrough GPU/NIC vendors — that the big vendor splits stayed out.
+    assert_script_run('pacman -Q linux linux-firmware-other grub networkmanager openssh sudo', 60);
+    assert_script_run('! pacman -Q linux-firmware-nvidia linux-firmware-amdgpu', 60);
 
     # --- theming chain (full/encrypted profiles) -------------------------
     # Plymouth runs from the initramfs, so the theme must be embedded in the
@@ -88,7 +92,11 @@ sub run {
         assert_script_run('grep -q "^Theme=instantos" /etc/plymouth/plymouthd.conf', 60);
         assert_script_run('grep -q "^HOOKS=.*systemd" /etc/mkinitcpio.conf', 60);
         assert_script_run('grep -q "^HOOKS=.*plymouth" /etc/mkinitcpio.conf', 60);
-        assert_script_run('bsdtar -tf /boot/initramfs-linux.img | grep -q plymouth/themes/instantos', 120);
+        # Read the image with the image's own lsinitcpio: bsdtar -tf only
+        # sees the leading uncompressed early-microcode cpio segment and
+        # never reaches the compressed main archive, which made a good
+        # install (theme verified embedded) look themeless.
+        assert_script_run('lsinitcpio /boot/initramfs-linux.img | grep -q "plymouth/themes/instantos"', 120);
         assert_script_run('grep -q "^GRUB_THEME=" /etc/default/grub', 60);
         assert_script_run('test -f /usr/share/grub/themes/instantos/theme.txt', 60);
         # On failure dump what grub-mkconfig actually emitted: distinguishes
