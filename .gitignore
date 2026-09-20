@@ -1,22 +1,27 @@
 # Guest injection binary (built from the instantCLI checkout by run.sh)
-assets/ins
+/assets/ins
 
-# isotovideo runtime state (all under the casedir it runs in)
-casedir/testresults/
-casedir/ulogs/
-casedir/vars.json
-casedir/qemu_state.json
-casedir/base_state.json
-casedir/backend.run
-casedir/serial0
-casedir/virtio_console.log
-casedir/virtio_console_user.log
-casedir/video.ogv
-casedir/video_time.vtt
-casedir/qemu.pid
-casedir/raid/
-casedir/qemuscreenshot/
-casedir/command-server-tmp/
-casedir/autoinst-status.json
-casedir/os-autoinst.pid
-casedir/qmp_socket.log
+# isotovideo runtime state, written into the directory the casedir runs from
+# (casedir/ for the main suite, diag/*/ for the offline harnesses —
+# unanchored on purpose so this one list covers them all)
+autoinst-status.json
+backend.run
+base_state.json
+command-server-tmp/
+os-autoinst.pid
+qemu.pid
+qemu_state.json
+qemuscreenshot/
+qmp_socket.log
+raid/
+serial0
+testresults/
+ulogs/
+vars.json
+video.ogv
+video_time.vtt
+virtio_console.log
+virtio_console_user.log
+*.qcow2
+__pycache__/
+run.log

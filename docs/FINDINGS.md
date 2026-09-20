@@ -175,7 +175,9 @@ prints the whole plan (sfdisk, mkfs, pacstrap, chroot config, grub,
 services). Plan for the minimal TTY config: DOS label, swap sized to RAM
 (note: **swap = full RAM size** — with 63 GB host RAM the dry-run planned a
 63 G swap; on a small disk that's a real-world bug worth flagging), ext4
-root, `pacstrap base linux-firmware linux intel-ucode`, in-chroot package
+root, `pacstrap base linux intel-ucode` (originally plus the
+`linux-firmware` meta package — superseded by the firmware vendor splits
+below), in-chroot package
 set incl. `grub os-prober qemu-guest-agent networkmanager openssh`,
 GRUB→MBR, NetworkManager/sshd/timesyncd/qemu-guest-agent enabled.
 
