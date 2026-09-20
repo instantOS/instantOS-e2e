@@ -19,6 +19,7 @@ Modes:
   --smoke        boot + in-VM dry-run only; ~4 min under TCG, no install
   --full         install + reboot + verification; ~35 min under TCG (default)
   --kvm          use /dev/kvm instead of TCG (KVM-capable host; ~10x faster)
+  --release      test published release via install.sh (skips cargo build & local web server)
   -h, --help     show this help
 
 Profiles (--profile NAME): which questions fixture to install with.
@@ -35,8 +36,8 @@ Environment:
   E2E_MEDIA_DIR    directory holding the ISO      (default ~/e2e-media)
   E2E_ISO_NAME     ISO file name                   (default archlinux-x86_64.iso)
 
-The suite needs port 8000 on the host to serve assets to the guest; a
-healthy server is reused, a conflicting one makes run.sh fail fast.
+The suite needs port 8000 on the host to serve assets to the guest in dev mode;
+a healthy server is reused, a conflicting one makes run.sh fail fast.
 EOF
 }
 
@@ -45,6 +46,7 @@ EOF
 # tuning in isotovideo VAR=VALUE passthrough.
 MODE=full
 KVM=0
+RELEASE=0
 PROFILE=minimal
 PASSTHROUGH=()
 while [ $# -gt 0 ]; do
@@ -52,6 +54,7 @@ while [ $# -gt 0 ]; do
         --smoke)   MODE=smoke ;;
         --full)    MODE=full ;;
         --kvm)     KVM=1 ;;
+        --release) RELEASE=1 ;;
         --profile) shift
                    [ $# -gt 0 ] || { echo "run.sh: --profile needs a value (minimal|full|encrypted)" >&2; exit 2; }
                    PROFILE=$1 ;;
@@ -75,10 +78,12 @@ E2E_MEDIA_DIR="${E2E_MEDIA_DIR:-$HOME/e2e-media}"
 E2E_ISO_NAME="${E2E_ISO_NAME:-archlinux-x86_64.iso}"
 INSTANTCLI_DIR="${INSTANTCLI_DIR:-$(cd "$REPO_ROOT/.." && pwd)/instantCLI}"
 
-if [ ! -f "$INSTANTCLI_DIR/Cargo.toml" ]; then
-    echo "instantCLI checkout not found at $INSTANTCLI_DIR" >&2
-    echo "set INSTANTCLI_DIR to a checkout of instantOS/instantCLI" >&2
-    exit 1
+if [ "$RELEASE" -eq 0 ]; then
+    if [ ! -f "$INSTANTCLI_DIR/Cargo.toml" ]; then
+        echo "instantCLI checkout not found at $INSTANTCLI_DIR" >&2
+        echo "set INSTANTCLI_DIR to a checkout of instantOS/instantCLI" >&2
+        exit 1
+    fi
 fi
 
 # isotovideo reuses/rewrites vars.json in the casedir; start fresh every run.
@@ -95,35 +100,39 @@ for leftover in casedir/testresults casedir/raid; do
     fi
 done
 
-# Build the binary injected into the guest from the paired instantCLI checkout.
-# Always run: cargo is incremental, so an unchanged checkout is a no-op — and
-# this prevents silently testing a stale assets/ins after source changes.
-echo "building ins from $INSTANTCLI_DIR (incremental)" >&2
-(cd "$INSTANTCLI_DIR" && cargo build --release --bin ins)
-cp "$INSTANTCLI_DIR/target/release/ins" assets/ins
+if [ "$RELEASE" -eq 0 ]; then
+    # Build the binary injected into the guest from the paired instantCLI checkout.
+    # Always run: cargo is incremental, so an unchanged checkout is a no-op — and
+    # this prevents silently testing a stale assets/ins after source changes.
+    echo "building ins from $INSTANTCLI_DIR (incremental)" >&2
+    (cd "$INSTANTCLI_DIR" && cargo build --release --bin ins)
+    cp "$INSTANTCLI_DIR/target/release/ins" assets/ins
 
-# Serve assets to the guest (slirp NAT: guest reaches the host at 10.0.2.2;
-# --network host makes that this machine). Port 8000 must serve assets/.
-HTTP_PID=""
-cleanup() { [ -n "$HTTP_PID" ] && kill "$HTTP_PID" 2>/dev/null || true; }
-trap cleanup EXIT
+    # Serve assets to the guest (slirp NAT: guest reaches the host at 10.0.2.2;
+    # --network host makes that this machine). Port 8000 must serve assets/.
+    HTTP_PID=""
+    cleanup() { [ -n "$HTTP_PID" ] && kill "$HTTP_PID" 2>/dev/null || true; }
+    trap cleanup EXIT
 
-if curl -fsS -o /dev/null http://127.0.0.1:8000/ins; then
-    echo "reusing http server already serving assets on :8000" >&2
-elif curl -fsS -o /dev/null --max-time 2 http://127.0.0.1:8000/ 2>/dev/null; then
-    echo "ERROR: port 8000 is taken by a server that does not serve assets/ins" >&2
-    echo "       usually a stale server from another checkout; free the port:" >&2
-    echo "       fuser -k 8000/tcp   (or: ss -ltnp | grep 8000; kill <pid>)" >&2
-    exit 1
-else
-    echo "starting http server for guest asset injection on :8000" >&2
-    (cd assets && exec python3 -m http.server 8000) >/dev/null 2>&1 &
-    HTTP_PID=$!
-    sleep 1
-    if ! curl -fsS -o /dev/null http://127.0.0.1:8000/ins; then
-        echo "ERROR: asset server on :8000 did not come up (check 'ss -ltnp | grep 8000')" >&2
+    if curl -fsS -o /dev/null http://127.0.0.1:8000/ins; then
+        echo "reusing http server already serving assets on :8000" >&2
+    elif curl -fsS -o /dev/null --max-time 2 http://127.0.0.1:8000/ 2>/dev/null; then
+        echo "ERROR: port 8000 is taken by a server that does not serve assets/ins" >&2
+        echo "       usually a stale server from another checkout; free the port:" >&2
+        echo "       fuser -k 8000/tcp   (or: ss -ltnp | grep 8000; kill <pid>)" >&2
         exit 1
+    else
+        echo "starting http server for guest asset injection on :8000" >&2
+        (cd assets && exec python3 -m http.server 8000) >/dev/null 2>&1 &
+        HTTP_PID=$!
+        sleep 1
+        if ! curl -fsS -o /dev/null http://127.0.0.1:8000/ins; then
+            echo "ERROR: asset server on :8000 did not come up (check 'ss -ltnp | grep 8000')" >&2
+            exit 1
+        fi
     fi
+else
+    echo "running in release mode: testing published release via install.sh (skipping local build & asset server)" >&2
 fi
 
 # --- isotovideo invocation -------------------------------------------------
@@ -151,6 +160,9 @@ fi
 if [ "$MODE" = smoke ]; then
     VARS[E2E_SMOKE]=1
 fi
+if [ "$RELEASE" -eq 1 ]; then
+    VARS[E2E_RELEASE]=1
+fi
 VARS[E2E_PROFILE]=$PROFILE
 for kv in "${PASSTHROUGH[@]}"; do VARS[${kv%%=*}]=${kv#*=}; done
 
@@ -160,6 +172,7 @@ for k in "${!VARS[@]}"; do ISO_ARGS+=("$k=${VARS[$k]}"); done
 set +e
 docker run --rm -w /tests --network host "${DOCKER_ARGS[@]}" \
     -v "$REPO_ROOT/casedir:/tests" \
+    -v "$REPO_ROOT/assets:/tests/assets:ro" \
     -v "$E2E_MEDIA_DIR:/media:ro" \
     registry.opensuse.org/devel/openqa/containers/isotovideo:qemu-x86 \
     --exit-status-from-test-results \

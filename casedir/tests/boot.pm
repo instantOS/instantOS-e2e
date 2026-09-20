@@ -2,6 +2,7 @@
 # host and run the installer's non-interactive path (dry-run first).
 use Mojo::Base 'basetest';
 use testapi;
+use MIME::Base64 'encode_base64';
 
 sub run {
     # Wait for the syslinux bootloader menu of the Arch ISO (it auto-boots
@@ -33,19 +34,40 @@ sub run {
     # confirmation.
     script_run('stty cols 400 rows 100');
 
-    # Fetch the `ins` binary and the questions file from the host machine
-    # (slirp NAT: host = 10.0.2.2, python3 -m http.server on port 8000).
     my $profile = get_var('E2E_PROFILE', 'minimal');
-    assert_script_run('curl -fsS -o /tmp/ins http://10.0.2.2:8000/ins', 600);
-    assert_script_run('chmod +x /tmp/ins', 30);
-    assert_script_run("curl -fsS -o /tmp/questions.toml http://10.0.2.2:8000/questions-$profile.toml", 60);
+    my $is_release = get_var('E2E_RELEASE');
+    my $ins_bin;
+
+    if ($is_release) {
+        # Release mode: inject the ~1 KB questions file directly over serial via
+        # base64 heredoc, eliminating the need for a local HTTP server on port 8000.
+        my $qfile = "/tests/assets/questions-$profile.toml";
+        open my $fh, '<', $qfile or die "Cannot open $qfile: $!";
+        my $raw_toml = do { local $/; <$fh> };
+        close $fh;
+        my $b64_toml = encode_base64($raw_toml);
+        assert_script_run("base64 -d > /tmp/questions.toml << 'EOF'\n${b64_toml}EOF\n", 60);
+
+        # Fetch and run the release installer script in unattended dry-run mode.
+        my $install_url = get_var('E2E_INSTALL_URL', 'https://instantos.io/install');
+        assert_script_run("curl -fsSL '$install_url' | bash -s -- --config /tmp/questions.toml --dry-run > /tmp/dryrun.log 2>&1; echo \"DRYRUN_RC=\$?\" >> /tmp/dryrun.log", 1800);
+        $ins_bin = '/usr/local/bin/ins';
+    } else {
+        # Fetch the `ins` binary and the questions file from the host machine
+        # (slirp NAT: host = 10.0.2.2, python3 -m http.server on port 8000).
+        assert_script_run('curl -fsS -o /tmp/ins http://10.0.2.2:8000/ins', 600);
+        assert_script_run('chmod +x /tmp/ins', 30);
+        assert_script_run("curl -fsS -o /tmp/questions.toml http://10.0.2.2:8000/questions-$profile.toml", 60);
+        $ins_bin = '/tmp/ins';
+
+        # Full plan in dry-run mode: validates the hand-written config end to end
+        # without touching the (empty) disk.
+        script_run("$ins_bin arch exec --dry-run -f /tmp/questions.toml > /tmp/dryrun.log 2>&1; echo \"DRYRUN_RC=\$?\" >> /tmp/dryrun.log", 900);
+    }
 
     # Smoke: the binary runs on the live ISO.
-    assert_script_run('/tmp/ins arch list | grep -q Keymap', 120);
+    assert_script_run("$ins_bin arch list | grep -q Keymap", 120);
 
-    # Full plan in dry-run mode: validates the hand-written config end to end
-    # without touching the (empty) disk.
-    script_run('/tmp/ins arch exec --dry-run --trust-config -f /tmp/questions.toml > /tmp/dryrun.log 2>&1; echo "DRYRUN_RC=$?" >> /tmp/dryrun.log', 900);
     # The recorded result of this assert carries the log tail into the test
     # results when it fails (script_run output is not persisted).
     assert_script_run('grep -q "DRYRUN_RC=0" /tmp/dryrun.log || { echo "=== dryrun.log ==="; tail -n 25 /tmp/dryrun.log; false; }', 60);

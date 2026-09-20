@@ -8,7 +8,8 @@ use testapi;
 sub run {
     # The real thing: no --dry-run. TCG emulation makes this slow (package
     # extraction, mkinitcpio), so allow plenty of time.
-    script_run('/tmp/ins arch exec --trust-config -f /tmp/questions.toml > /tmp/install.log 2>&1; echo "INSTALL_RC=$?" >> /tmp/install.log', 10800);
+    my $ins_bin = get_var('E2E_RELEASE') ? '/usr/local/bin/ins' : '/tmp/ins';
+    script_run("$ins_bin arch exec -f /tmp/questions.toml > /tmp/install.log 2>&1; echo \"INSTALL_RC=\$?\" >> /tmp/install.log", 10800);
 
     # Keep the log as an artifact and dump the interesting bits to the serial
     # console (which lands in the isotovideo log) before asserting.

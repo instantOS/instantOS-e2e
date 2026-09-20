@@ -30,6 +30,7 @@ sibling or via `INSTANTCLI_DIR`.
 ./run.sh --smoke      # ~4 min:  ISO boot + full in-VM dry-run, no install
 ./run.sh              # ~35 min TCG: install + reboot + 14 post-install asserts
 ./run.sh --kvm        # KVM-capable host only: full run in ~4 min
+./run.sh --release    # test published release via install.sh (no source build/web server)
 ./run.sh --help       # all options; extra isotovideo vars pass through,
                       # e.g. ./run.sh QEMUCPUS=16
 ```

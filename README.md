@@ -24,6 +24,7 @@ faster), an Arch ISO, and an instantCLI checkout.
 
 ./run.sh                 # full pipeline: install + reboot + verify (~35 min TCG)
 ./run.sh --smoke         # boot ISO + in-VM dry-run only (~4 min)
+./run.sh --release       # test published release via install.sh (no source build, no web server)
 ```
 
 CI runs the same thing — see `.github/workflows/e2e.yml` (nightly +
