@@ -1,0 +1,14 @@
+{
+    "area": [
+        {
+            "height": 22,
+            "type": "match",
+            "width": 380,
+            "xpos": 0,
+            "ypos": 42
+        }
+    ],
+    "tags": [
+        "archiso-prompt"
+    ]
+}

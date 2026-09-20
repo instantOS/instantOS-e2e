@@ -1,0 +1,85 @@
+name: e2e
+run-name: "e2e: instantCLI ${{ inputs.product_ref || 'main' }}${{ inputs.smoke == true && ' (smoke)' || '' }}"
+on:
+  schedule:
+    # Nightly; TCG (no KVM on hosted runners) so the full install takes ~1 h.
+    - cron: "40 2 * * *"
+  workflow_dispatch:
+    inputs:
+      product_ref:
+        description: "instantCLI ref to test (tag, branch or sha)"
+        default: "main"
+        type: string
+      smoke:
+        description: "Smoke only (ISO boot + in-VM dry-run, ~5 min)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e
+  cancel-in-progress: false
+
+jobs:
+  install-e2e:
+    name: ins arch install e2e (isotovideo, TCG)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    env:
+      E2E_MEDIA_DIR: ${{ github.workspace }}/e2e-media
+      E2E_SMOKE: ${{ inputs.smoke == true && '1' || '0' }}
+      INSTANTCLI_DIR: ${{ github.workspace }}/instantCLI
+    steps:
+      - name: Checkout e2e suite
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90f # v7.0.1
+
+      - name: Checkout instantCLI
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90f # v7.0.1
+        with:
+          repository: instantOS/instantCLI
+          ref: ${{ inputs.product_ref || 'main' }}
+          path: instantCLI
+
+      - name: Download Arch ISO
+        run: |
+          mkdir -p "$E2E_MEDIA_DIR"
+          curl -fL --retry 3 -C - -o "$E2E_MEDIA_DIR/archlinux-x86_64.iso" \
+            https://geo.mirror.archlinux.org/iso/latest/archlinux-x86_64.iso
+          ls -la "$E2E_MEDIA_DIR"
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workdir: instantCLI
+          prefix-key: e2e-release
+
+      - name: Build ins for guest injection
+        run: cargo build --release --bin ins
+        working-directory: instantCLI
+
+      - name: Start HTTP server for guest asset injection
+        run: |
+          cp instantCLI/target/release/ins assets/ins
+          (cd assets && python3 -m http.server 8000 >/dev/null 2>&1 &)
+          sleep 1
+          curl -fsS -o /dev/null http://127.0.0.1:8000/ins
+
+      - name: Run e2e suite
+        # Hosted runners have 4 vCPUs and no /dev/kvm: TCG only, hence the
+        # generous job timeout. QEMUCPUS=4 matches the runner. run.sh builds
+        # ins from INSTANTCLI_DIR (cached below).
+        run: >
+          ./run.sh QEMUCPUS=4
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: e2e-results
+          path: |
+            casedir/testresults/
+            casedir/ulogs/
+          if-no-files-found: ignore
+          retention-days: 14

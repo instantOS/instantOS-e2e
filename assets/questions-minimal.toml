@@ -1,0 +1,36 @@
+# Minimal VM-friendly configuration for `ins arch exec` e2e tests.
+# TTY-only desktop (no DE/display manager), ext4, no encryption, minimal mode.
+#
+# Hand-editable on purpose: `ins arch exec --trust-config` accepts configs
+# without dependency-provenance records (answers are still validated).
+completed_steps = []
+step_dependency_fingerprints = {}
+
+[answers]
+Hostname = "ins-e2e-vm"
+Username = "tester"
+Password = "correct-horse-battery-staple"
+Keymap = "us"
+Disk = "/dev/vda"
+PartitioningMethod = "automatic"
+MirrorRegion = "Germany"
+Timezone = "Europe/Berlin"
+Locale = "en_US.UTF-8"
+Kernel = "linux"
+DesktopEnvironment = "none/tty"
+RootFilesystem = "ext4"
+UseEncryption = "no"
+UsePlymouth = "no"
+LogUpload = "no"
+MinimalMode = "yes"
+
+[system_info]
+boot_mode = "BIOS"
+has_amd_cpu = false
+has_intel_cpu = true
+gpus = [{ Other = "QEMU Virtual Video" }]
+vm_type = "kvm"
+internet_connected = true
+architecture = "x86_64"
+distro = "arch"
+total_ram_gb = 8
