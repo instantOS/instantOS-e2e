@@ -43,6 +43,22 @@ sibling or via `INSTANTCLI_DIR`.
   packages, bootloader, chroot steps), initramfs/kernel handling — and always
   before declaring install-path work done.
 
+**Profiles** — which installed configuration gets verified:
+
+- `--profile minimal` (default): TTY-only, fast; core install machinery.
+- `--profile full`: instantOS packages + Plymouth + GRUB theme. verify.pm
+  asserts the whole theming chain — packages present, `Theme=instantos`
+  configured, `plymouth` in HOOKS, and critically that the theme is embedded
+  **inside the initramfs image** (`bsdtar -tf`), which is what makes the
+  passphrase prompt themed at all.
+- `--profile encrypted`: full + LUKS (`/boot` inside the container). Adds
+  cryptodisk/sd-encrypt asserts, root-from-mapper check, and blind-typing of
+  the passphrase through the double prompt (GRUB + initramfs) at boot.
+  **Known product caveats under test**: the code comments in
+  `config.rs::configure_plymouth` and `bootloader.rs::configure_grub_theme`
+  claim both themes are not visible when encryption is on — these runs are
+  how that gets settled empirically.
+
 ## Running it as an agent
 
 A full run far exceeds typical command timeouts. Run it detached and poll:

@@ -35,9 +35,10 @@ sub run {
 
     # Fetch the `ins` binary and the questions file from the host machine
     # (slirp NAT: host = 10.0.2.2, python3 -m http.server on port 8000).
+    my $profile = get_var('E2E_PROFILE', 'minimal');
     assert_script_run('curl -fsS -o /tmp/ins http://10.0.2.2:8000/ins', 600);
     assert_script_run('chmod +x /tmp/ins', 30);
-    assert_script_run('curl -fsS -o /tmp/questions.toml http://10.0.2.2:8000/questions-minimal.toml', 60);
+    assert_script_run("curl -fsS -o /tmp/questions.toml http://10.0.2.2:8000/questions-$profile.toml", 60);
 
     # Smoke: the binary runs on the live ISO.
     assert_script_run('/tmp/ins arch list | grep -q Keymap', 120);

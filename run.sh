@@ -21,6 +21,12 @@ Modes:
   --kvm          use /dev/kvm instead of TCG (KVM-capable host; ~10x faster)
   -h, --help     show this help
 
+Profiles (--profile NAME): which questions fixture to install with.
+  minimal        default; TTY-only, no instantOS packages (fastest)
+  full           instantOS packages + Plymouth + GRUB theme (theming asserts)
+  encrypted      full profile + LUKS; verifies the encrypted boot chain and
+                 that the Plymouth theme is embedded in the initramfs
+
 Any VAR=VALUE arguments are passed through to isotovideo and override the
 defaults, e.g. QEMUCPUS=16, QEMURAM=8192, HDDSIZEGB=40, PASSWORD=...
 
@@ -39,12 +45,16 @@ EOF
 # tuning in isotovideo VAR=VALUE passthrough.
 MODE=full
 KVM=0
+PROFILE=minimal
 PASSTHROUGH=()
 while [ $# -gt 0 ]; do
     case "$1" in
         --smoke)   MODE=smoke ;;
         --full)    MODE=full ;;
         --kvm)     KVM=1 ;;
+        --profile) shift
+                   [ $# -gt 0 ] || { echo "run.sh: --profile needs a value (minimal|full|encrypted)" >&2; exit 2; }
+                   PROFILE=$1 ;;
         -h|--help) usage; exit 0 ;;
         --)        shift; PASSTHROUGH+=("$@"); break ;;
         --*)       echo "run.sh: unknown option '$1' (try --help)" >&2; exit 2 ;;
@@ -53,6 +63,11 @@ while [ $# -gt 0 ]; do
     esac
     shift
 done
+
+case "$PROFILE" in
+    minimal|full|encrypted) ;;
+    *) echo "run.sh: unknown profile '$PROFILE' (minimal|full|encrypted)" >&2; exit 2 ;;
+esac
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$REPO_ROOT"
@@ -67,8 +82,18 @@ if [ ! -f "$INSTANTCLI_DIR/Cargo.toml" ]; then
 fi
 
 # isotovideo reuses/rewrites vars.json in the casedir; start fresh every run.
+# Leftovers can be root-owned (container output after a crashed/failed run):
+# try non-interactive sudo first, then fall back to user-level rm.
+if ! sudo -n rm -rf casedir/testresults casedir/raid 2>/dev/null; then
+    rm -rf casedir/testresults casedir/raid
+fi
 rm -f casedir/vars.json
-rm -rf casedir/testresults casedir/raid
+for leftover in casedir/testresults casedir/raid; do
+    if [ -e "$leftover" ]; then
+        echo "ERROR: cannot remove $leftover (root-owned?); run: sudo rm -rf $leftover" >&2
+        exit 1
+    fi
+done
 
 # Build the binary injected into the guest from the paired instantCLI checkout.
 # Always run: cargo is incremental, so an unchanged checkout is a no-op — and
@@ -126,6 +151,7 @@ fi
 if [ "$MODE" = smoke ]; then
     VARS[E2E_SMOKE]=1
 fi
+VARS[E2E_PROFILE]=$PROFILE
 for kv in "${PASSTHROUGH[@]}"; do VARS[${kv%%=*}]=${kv#*=}; done
 
 ISO_ARGS=()
@@ -142,6 +168,10 @@ rc=$?
 set -e
 
 # The container runs as root; give artifacts back to the invoking user.
-# -n: never hang waiting for a password (artifacts stay root-owned instead).
-sudo -n chown -R "${USER}:$(id -gn)" casedir 2>/dev/null || true
+# -n: never hang waiting for a password. If this fails, say so loudly —
+# root-owned leftovers will break the NEXT run's cleanup.
+if ! sudo -n chown -R "${USER}:$(id -gn)" casedir 2>/dev/null; then
+    echo "WARNING: could not chown casedir artifacts (no passwordless sudo?);" >&2
+    echo "         run 'sudo chown -R $(id -u):\$(id -g) casedir' before the next run" >&2
+fi
 exit "$rc"

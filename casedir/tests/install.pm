@@ -27,7 +27,8 @@ sub run {
     # would. QEMU blockdevs use cache.no-flush=on, so a raw system_reset
     # would discard whatever pages the live system never flushed — which
     # silently reverted grub.cfg to empty in earlier runs.
-    assert_script_run('swapoff /dev/vda1 || true', 120);
+    # swapoff -a is layout-agnostic (plain partition or LVM-inside-LUKS).
+    assert_script_run('swapoff -a', 120);
     assert_script_run('umount -R /mnt', 300);
     assert_script_run('sync', 120);
 

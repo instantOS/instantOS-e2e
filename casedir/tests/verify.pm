@@ -8,6 +8,21 @@ use Mojo::Base 'basetest';
 use testapi;
 
 sub run {
+    my $profile = get_var('E2E_PROFILE', 'minimal');
+
+    # Encrypted installs boot through two passphrase prompts: GRUB
+    # cryptodisk unlock (nothing can be themed there — GRUB has not read any
+    # files yet) and the initramfs sd-encrypt prompt (which Plymouth should
+    # cover). Blind-type the passphrase with retries; a stray password that
+    # lands at the login prompt just fails one login attempt and re-prompts.
+    if ($profile eq 'encrypted') {
+        for my $i (1 .. 3) {
+            sleep 20;
+            type_password;
+            send_key 'ret';
+        }
+    }
+
     # The installed system boots from disk now (the e2e cleaned up and
     # cleanly shut down the live system before resetting).
     assert_screen 'installed-login', 900;
@@ -60,6 +75,38 @@ sub run {
 
     # Packages the plan promised
     assert_script_run('pacman -Q linux linux-firmware grub networkmanager openssh sudo', 60);
+
+    # --- theming chain (full/encrypted profiles) -------------------------
+    # Plymouth runs from the initramfs, so the theme must be embedded in the
+    # initramfs IMAGE — a theme only present on the (encrypted) root cannot
+    # cover the passphrase prompt. This assert is the regression detector for
+    # exactly that. The instantOS theme packages arrive transitively:
+    # instantdepend -> plymouth-theme-instantos, instantos -> grub-instantos.
+    if ($profile ne 'minimal') {
+        assert_script_run('grep -q "^ID=instantos" /etc/os-release', 60);
+        assert_script_run('pacman -Q plymouth plymouth-theme-instantos grub-instantos instantos', 60);
+        assert_script_run('grep -q "^Theme=instantos" /etc/plymouth/plymouthd.conf', 60);
+        assert_script_run('grep -q "^HOOKS=.*systemd" /etc/mkinitcpio.conf', 60);
+        assert_script_run('grep -q "^HOOKS=.*plymouth" /etc/mkinitcpio.conf', 60);
+        assert_script_run('bsdtar -tf /boot/initramfs-linux.img | grep -q plymouth/themes/instantos', 120);
+        assert_script_run('grep -q "^GRUB_THEME=" /etc/default/grub', 60);
+        assert_script_run('test -f /usr/share/grub/themes/instantos/theme.txt', 60);
+        # On failure dump what grub-mkconfig actually emitted: distinguishes
+        # "theme never emitted" from "emitted but asset not loadable"
+        # (00_header insmods png but not jpeg — the instantos theme's
+        # background is a JPG, so the background silently fails to render).
+        assert_script_run('grep -q "instantos" /boot/grub/grub.cfg || { echo "=== /etc/default/grub ==="; cat /etc/default/grub; echo "=== grub.cfg gfx lines ==="; grep -nE "insmod|theme|terminal_output|gfxmode|loadfont" /boot/grub/grub.cfg | head -30; false; }', 60);
+    }
+
+    # --- encrypted layout (encrypted profile) ----------------------------
+    if ($profile eq 'encrypted') {
+        assert_script_run('grep -q "GRUB_ENABLE_CRYPTODISK=y" /etc/default/grub', 60);
+        assert_script_run('grep -q "rd.luks" /boot/grub/grub.cfg', 60);
+        assert_script_run('grep -q "^HOOKS=.*sd-encrypt" /etc/mkinitcpio.conf', 60);
+        assert_script_run('lsblk -no TYPE /dev/vda2 | grep -q crypt', 60);
+        # root must come from the mapper (LVM inside LUKS), not the raw device
+        assert_script_run('findmnt -n -o SOURCE / | grep -q /dev/mapper/', 60);
+    }
 
     # Network actually works (slirp gateway answers)
     assert_script_run('ping -c1 -W5 10.0.2.2', 120);
