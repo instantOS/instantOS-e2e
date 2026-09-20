@@ -23,7 +23,7 @@ faster), an Arch ISO, and an instantCLI checkout.
 #   ~/e2e-media/archlinux-x86_64.iso     install medium
 
 ./run.sh                 # full pipeline: install + reboot + verify (~35 min TCG)
-./run.sh E2E_SMOKE=1     # boot ISO + in-VM dry-run only (~4 min)
+./run.sh --smoke         # boot ISO + in-VM dry-run only (~4 min)
 ```
 
 CI runs the same thing — see `.github/workflows/e2e.yml` (nightly +
