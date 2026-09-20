@@ -1,5 +1,5 @@
 name: e2e
-run-name: "e2e: instantCLI ${{ inputs.product_ref || 'main' }}${{ inputs.smoke == true && ' (smoke)' || '' }}"
+run-name: "e2e: instantCLI ${{ inputs.product_ref || 'main' }} [${{ inputs.profile || 'minimal' }}]${{ inputs.smoke == true && ' (smoke)' || '' }}"
 on:
   schedule:
     # Nightly; TCG (no KVM on hosted runners) so the full install takes ~1 h.
@@ -14,6 +14,14 @@ on:
         description: "Smoke only (ISO boot + in-VM dry-run, ~5 min)"
         type: boolean
         default: false
+      profile:
+        description: "Questions fixture profile"
+        type: choice
+        options:
+          - minimal
+          - full
+          - encrypted
+        default: minimal
 
 permissions:
   contents: read
@@ -44,7 +52,8 @@ jobs:
       - name: Resolve current ISO checksum
         id: iso
         run: |
-          SUM=$(curl -fsSL https://geo.mirror.archlinux.org/iso/latest/sha256sums.txt |
+          SUM=$((curl -fsSL https://archlinux.org/iso/latest/sha256sums.txt 2>/dev/null || \
+                 curl -fsSL https://geo.mirror.pkgbuild.com/iso/latest/sha256sums.txt) |
             awk '$2 == "archlinux-x86_64.iso" {print $1}')
           [ -n "$SUM" ] || { echo "could not resolve ISO checksum" >&2; exit 1; }
           echo "sum=$SUM" >> "$GITHUB_OUTPUT"
@@ -63,9 +72,13 @@ jobs:
         run: |
           mkdir -p "$E2E_MEDIA_DIR"
           ISO="$E2E_MEDIA_DIR/archlinux-x86_64.iso"
-          curl -fL --retry 3 -C - -o "$ISO" \
-            https://geo.mirror.archlinux.org/iso/latest/archlinux-x86_64.iso
-          echo "${{ steps.iso.outputs.sum }}  $ISO" | sha256sum -c -
+          TMP="$ISO.tmp"
+          PRIMARY="https://fastly.mirror.pkgbuild.com/iso/latest/archlinux-x86_64.iso"
+          FALLBACK="https://geo.mirror.pkgbuild.com/iso/latest/archlinux-x86_64.iso"
+          curl -fL --retry 5 --retry-connrefused --retry-delay 2 -o "$TMP" "$PRIMARY" || \
+            curl -fL --retry 5 --retry-connrefused --retry-delay 2 -o "$TMP" "$FALLBACK"
+          echo "${{ steps.iso.outputs.sum }}  $TMP" | sha256sum -c -
+          mv "$TMP" "$ISO"
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
@@ -88,7 +101,7 @@ jobs:
         # Hosted runners have 4 vCPUs and no /dev/kvm: TCG only, hence the
         # generous job timeout. QEMUCPUS=4 matches the runner. run.sh builds
         # ins from INSTANTCLI_DIR (cached below).
-        run: ./run.sh QEMUCPUS=4 ${{ inputs.smoke == true && '--smoke' || '' }}
+        run: ./run.sh QEMUCPUS=4 --profile ${{ inputs.profile || 'minimal' }} ${{ inputs.smoke == true && '--smoke' || '' }}
 
       - name: Upload test results
         if: always()
