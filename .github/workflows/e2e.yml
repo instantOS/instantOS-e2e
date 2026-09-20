@@ -42,12 +42,31 @@ jobs:
           ref: ${{ inputs.product_ref || 'main' }}
           path: instantCLI
 
-      - name: Download Arch ISO
+      - name: Resolve current ISO checksum
+        id: iso
+        run: |
+          SUM=$(curl -fsSL https://geo.mirror.archlinux.org/iso/latest/sha256sums.txt |
+            awk '$2 == "archlinux-x86_64.iso" {print $1}')
+          [ -n "$SUM" ] || { echo "could not resolve ISO checksum" >&2; exit 1; }
+          echo "sum=$SUM" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Arch ISO
+        id: iso-cache
+        uses: actions/cache@v4
+        with:
+          # Keyed by sha256: one download per ISO release, not per run.
+          # Nightly runs keep the entry warm (unused entries expire in 7 days).
+          path: ${{ github.workspace }}/e2e-media/archlinux-x86_64.iso
+          key: archiso-${{ steps.iso.outputs.sum }}
+
+      - name: Download and verify Arch ISO (cache miss only)
+        if: steps.iso-cache.outputs.cache-hit != 'true'
         run: |
           mkdir -p "$E2E_MEDIA_DIR"
-          curl -fL --retry 3 -C - -o "$E2E_MEDIA_DIR/archlinux-x86_64.iso" \
+          ISO="$E2E_MEDIA_DIR/archlinux-x86_64.iso"
+          curl -fL --retry 3 -C - -o "$ISO" \
             https://geo.mirror.archlinux.org/iso/latest/archlinux-x86_64.iso
-          ls -la "$E2E_MEDIA_DIR"
+          echo "${{ steps.iso.outputs.sum }}  $ISO" | sha256sum -c -
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2

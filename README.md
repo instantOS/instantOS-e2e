@@ -57,6 +57,9 @@ docs/FINDINGS.md        research log: findings, bugs caught, gotchas
 
 ## Notes
 
+- The CI job caches the Arch ISO keyed by its published sha256
+  (`actions/cache`): one download per ISO release instead of per run, and a
+  checksum check on every cache miss.
 - The `ins` binary under `assets/` is generated; never commit it.
 - Needle PNGs *are* committed — they are the test fixtures. Keep crops
   tight to stable text (avoid kernel versions/timestamps) so they survive
