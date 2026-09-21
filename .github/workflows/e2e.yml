@@ -85,6 +85,9 @@ jobs:
         with:
           workdir: instantCLI
           prefix-key: e2e-release
+          # Save even when the e2e run fails: a nightly installer suite goes
+          # red regularly, and a failed run must not leave the next one cold.
+          cache-on-failure: true
 
       - name: Build ins for guest injection
         run: cargo build --release --bin ins
