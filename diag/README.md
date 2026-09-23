@@ -50,6 +50,30 @@ docker run --rm -w /tests --network host \
   HDD_1=/tests/raid/hd0 PASSWORD=... > run.log 2>&1
 ```
 
+## liveiso
+
+Boots the **instantOS live ISO** (not the Arch installer ISO) and asserts the
+live session: boot menu, bare-desktop bar in the pre-Welcome gap, Welcome TUI,
+then the full strict set over the serial console (greetd, Wayland socket,
+Xorg absent, swaybg wallpaper, live-setup marker + NetworkManager). This is
+the harness behind `isotests.md` (repo root) — read that for the full
+research log, needle lessons and known instantwm/ISO findings.
+
+```sh
+# boot a locally built ISO (from diag/liveiso)
+E2E_MEDIA_DIR=../../instantOS/iso/build/iso \
+E2E_ISO_NAME=instantos-YYYY.MM.DD-x86_64.iso ./run.sh
+
+# offline-injected ISO: additionally asserts the xorriso-injected bundle is
+# mounted where `ins` probes it, the dotfiles snapshot shipped and the
+# mirrorlist prefers file:// (Phase 0 spike of offlineiso.md)
+... ./run.sh E2E_OFFLINE=1
+
+# UEFI (OVMF): boots the default systemd-boot entry; desktop-needle asserts
+# only (no serial console without a menu edit — see tests/liveiso.pm header)
+... ./run.sh UEFI=1 [E2E_OFFLINE=1]
+```
+
 ## Repairing a broken install offline
 
 ```sh

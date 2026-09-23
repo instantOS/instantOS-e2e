@@ -24,4 +24,4 @@ virtio_console.log
 virtio_console_user.log
 *.qcow2
 __pycache__/
-run.log
+run*.log

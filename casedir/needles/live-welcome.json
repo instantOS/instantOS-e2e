@@ -1,0 +1,28 @@
+{
+    "area": [
+        {
+            "xpos": 46,
+            "ypos": 136,
+            "width": 460,
+            "height": 33,
+            "type": "match"
+        },
+        {
+            "xpos": 520,
+            "ypos": 105,
+            "width": 470,
+            "height": 88,
+            "type": "match"
+        },
+        {
+            "xpos": 370,
+            "ypos": 0,
+            "width": 170,
+            "height": 17,
+            "type": "match"
+        }
+    ],
+    "tags": [
+        "live-welcome"
+    ]
+}
