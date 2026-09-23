@@ -81,6 +81,10 @@ sub assert_core_suite {
     # passthrough GPU/NIC vendors — that the big vendor splits stayed out.
     assert_script_run('pacman -Q linux linux-firmware-other grub networkmanager openssh sudo', 60);
     assert_script_run('! pacman -Q linux-firmware-nvidia linux-firmware-amdgpu', 60);
+    # This VM shape has no bluetooth adapter; the installer must not pull the
+    # bluetooth stack (blueman is an optdepends of instantdepend now and is
+    # added by the installer only when /sys/class/bluetooth shows an adapter).
+    assert_script_run('! pacman -Q blueman bluez', 60);
 }
 
 1;
