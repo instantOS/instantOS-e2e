@@ -33,7 +33,7 @@ concurrency:
 jobs:
   install-e2e:
     name: ins arch install e2e (isotovideo, TCG)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 150
     env:
       E2E_MEDIA_DIR: ${{ github.workspace }}/e2e-media
