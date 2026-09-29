@@ -1,6 +1,13 @@
 # Guest injection binary (built from the instantCLI checkout by run.sh)
 /assets/ins
 
+# Prepared running-OS host disk images for the --host-arch / --host-ubuntu
+# flows (tools/mkhost-arch.sh, tools/mkhost-ubuntu.sh). Large binaries built
+# from docker base images; never commit them — the builders are the source.
+/*.img
+*.img.env
+hostimg-*/
+
 # isotovideo runtime state, written into the directory the casedir runs from
 # (casedir/ for the main suite, diag/*/ for the offline harnesses —
 # unanchored on purpose so this one list covers them all)
