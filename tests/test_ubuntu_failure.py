@@ -25,6 +25,7 @@ class UbuntuFailureTests(unittest.TestCase):
         self.text('testresults/failure.txt', '# Test died: /dev/vdb is no longer blank\n--- # stack trace\n')
         for phase in ('pre', 'dryrun', 'post'):
             self.text(f'ulogs/{phase}-host-config.sha', 'unchanged protected configuration\n')
+        self.text('ulogs/dryrun.log', 'DRYRUN_RC=0\n')
         self.text('ulogs/install.log', 'Warning: You appear to be running on ubuntu\n'
                   'Failed to read /etc/pacman.conf\nNo such file or directory (os error 2)\n'
                   'INSTALL_RC=1\n')
@@ -75,7 +76,7 @@ class UbuntuFailureTests(unittest.TestCase):
 
     def test_missing_or_malformed_evidence_is_not_expected(self):
         for name in ('ulogs/pre-host-config.sha', 'ulogs/dryrun-host-config.sha',
-                     'ulogs/post-host-config.sha', 'ulogs/install.log',
+                     'ulogs/post-host-config.sha', 'ulogs/install.log', 'ulogs/dryrun.log',
                      'testresults/failure.txt', 'autoinst-status.json'):
             path = self.root / name
             contents = path.read_bytes()
@@ -83,6 +84,13 @@ class UbuntuFailureTests(unittest.TestCase):
             self.assertFalse(self.known())
             path.write_bytes(contents)
         self.text('vars.json', 'not json')
+        self.assertFalse(self.known())
+
+    def test_failed_dryrun_or_invalid_json_shape_is_not_expected(self):
+        self.text('ulogs/dryrun.log', 'DRYRUN_RC=1\n')
+        self.assertFalse(self.known())
+        self.text('ulogs/dryrun.log', 'DRYRUN_RC=0\n')
+        self.json('vars.json', [])
         self.assertFalse(self.known())
 
     def test_incomplete_run_is_not_expected(self):

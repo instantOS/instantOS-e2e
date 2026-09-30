@@ -49,6 +49,8 @@ def known_ubuntu_gap(harness: Path, exit_code: int) -> bool:
         if not baseline or any((logs / f'{phase}-host-config.sha').read_bytes() != baseline
                                for phase in ('dryrun', 'post')):
             return False
+        if not re.search(r'^DRYRUN_RC=0$', (logs / 'dryrun.log').read_text(), re.M):
+            return False
         log = (logs / 'install.log').read_text()
         if (not re.search(r'^INSTALL_RC=1$', log, re.M)
                 or 'You appear to be running on' not in log
@@ -58,7 +60,7 @@ def known_ubuntu_gap(harness: Path, exit_code: int) -> bool:
                 or 'invalid configuration' in log):
             return False
         return True
-    except (OSError, ValueError, KeyError, TypeError):
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return False
 
 
