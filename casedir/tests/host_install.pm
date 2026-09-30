@@ -1,5 +1,5 @@
 # Running-Arch installs must preserve their host; Ubuntu must refuse before
-# disk writes. The Ubuntu contract is deliberately red on current instantCLI.
+# disk writes. Older instantCLI refs lack that gate; current versions enforce it.
 # Keep these safety assertions: docs/FINDINGS.md records the product baseline.
 use Mojo::Base 'basetest';
 use testapi;

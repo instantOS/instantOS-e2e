@@ -12,12 +12,12 @@ on the ISO instead.
 | `host-arch` | Running Arch on `/dev/vda` | Install onto `/dev/vdb`, preserve the host, boot the target standalone and verify |
 | `host-ubuntu` | Running Ubuntu on `/dev/vda` | Refuse before writing `/dev/vdb`, preserve the host; no target boot |
 
-The Ubuntu refusal contract is currently red on instantCLI `dev`: its
-host-profile gate exists in `ins arch install`, while this suite drives
-`ins arch exec`. CI tolerates only the documented partition-before-refusal failure, using completed
-VM results and preservation evidence. Other failures remain fatal. Keep its
-assertions intact; [FINDINGS](docs/FINDINGS.md#non-live-install-characterisation)
-records the product baseline and the latest Arch chroot-guard failure.
+The Ubuntu flow requires `ins arch exec` to refuse before any disk writes.
+Older instantCLI refs lack that gate. CI tolerates only their documented
+partition-before-refusal failure, using completed VM results and preservation
+evidence; infrastructure and preservation failures remain fatal. Current
+instantCLI enforces the gate. [FINDINGS](docs/FINDINGS.md#non-live-install-characterisation)
+records the older product failures and their fixes.
 
 ## Run locally
 

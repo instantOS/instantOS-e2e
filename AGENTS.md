@@ -68,10 +68,11 @@ before changing host assertions:
   the host's package configuration and installer state untouched. These checks
   are green on instantCLI dev and red on the older `49ff5bb9`; a regression
   must not be "fixed" by restoring the destructive behavior.
-- Ubuntu refusal checks encode a product requirement not implemented on the
-  current `ins arch exec` path. The host-profile gate is in `ins arch install`
-  only. This flow is red by design, and CI uses `continue-on-error`; do not
-  invert its assertions to match today's behavior.
+- Ubuntu refusal checks encode the requirement to reject a foreign source host
+  before disk writes. Older instantCLI refs gate `ins arch install` only;
+  current `ins arch exec` enforces the gate too. CI tolerates only the documented
+  older-ref failure, never infrastructure or host-preservation failures. Keep
+  the refusal assertions intact.
 - Full host-Arch runs must boot and verify the extracted target. There is no
   verification-skip option. Ubuntu has no second stage because nothing should
   have been installed.

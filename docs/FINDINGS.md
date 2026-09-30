@@ -675,3 +675,81 @@ The installed-system verification helpers were likewise consolidated after a
 copied diagnostic assertion still required `linux-firmware` when the installer
 had switched to vendor splits. Both callers now use the same complete suite.
 The initramfs archive inspection issue is recorded earlier in this file.
+
+## September 2026 runner corrections
+
+The old isotovideo digest returned `manifest unknown`. The replacement pins the
+published `qemu-x86` image at
+`sha256:e872f96e97bd177da84851b1f0db4190602e7718e0c1f4137ec1a09562a836b0`;
+it was fetched successfully before running Perl checks and real VMs. Both
+runners now probe KVM usability and prefer it, with explicit `--tcg` and `--kvm`
+options. The diagnostic input guard and cleanup share one list of cleared paths.
+
+Expanded host snapshots cover account, locale, console, timezone, boot and
+package configuration, installer state, symlink targets and directory entries.
+They exclude timestamps and mutable keyring contents. CI includes early console
+logs and VM variables from installation and standalone verification. Its older
+Ubuntu exemption requires a completed run, successful boot/dry-run, unchanged
+host snapshots and the exact documented blank-disk failure after missing
+`/etc/pacman.conf`; unrelated failures remain fatal.
+
+Full VM validation uncovered four instantCLI defects, fixed in its checkout:
+
+- A stock Arch ISO lacked `/var/log/instantos`; execution now creates the parent
+  of the installer log before opening it.
+- Chroot re-entry revalidated the selected target as a forbidden running disk.
+  Answer validation now accepts this expected relationship inside the target
+  chroot; the destructive preparation guard remains enforced.
+- `ins arch exec` now rejects foreign source hosts before creating state or
+  writing disks. Dry-run and target chroot re-entry remain supported.
+- `genfstab -U` retained `/dev/vdb1` for freshly formatted swap when lsblk/udev
+  had not populated its UUID. The target booted standalone as `/dev/vda`, leaving
+  swap inactive. The installer now probes device-based swap entries with
+  `blkid -p` and writes UUIDs; a failed or invalid probe stops fstab generation.
+
+A published encrypted installation exposed two harness lifecycle issues. Ejecting
+the ISO before shutdown caused SQUASHFS read errors and prevented power-off.
+After correcting that order, QEMU's `-no-shutdown` left its CPUs stopped: a reset
+must be followed by `resume_vm`. A shutdown timeout now fails before eject/reset.
+
+The old encrypted boot helper submitted passwords during GRUB decryption, before
+the second prompt existed. The replacement detects the GRUB and Plymouth unlock
+prompts independently, each with a bounded timeout, and submits the encryption
+credential only after matching its stage. Both prompts matched on the preserved
+published target. Its later no-Bluetooth assertion still failed because that
+older installer included blueman; the assertion was kept.
+
+The fixed checkout also installed successfully and its extracted encrypted disk
+passed both prompt matches and login, then failed the same no-Bluetooth check.
+On 2026-09-30 the main repository database advertised
+`instantdepend-202609091410-1` with mandatory `blueman`; Surge advertised
+`202609192124-1` with the same dependency. The neighboring packages source already
+has `optdepends=('blueman: bluetooth device manager')`. Publishing that corrected
+metapackage is necessary for full/encrypted acceptance to become green. Removing
+a required dependency in the installer would leave an inconsistent package
+database and is not a suitable workaround. Evidence is in
+`../e2e-work/results/encrypted-checkout-text-prompt/` and
+`../e2e-work/results/encrypted-checkout-verification/`.
+
+The full Ubuntu flow passed against the fixed checkout, including blank-disk
+and expanded host-preservation assertions. Evidence is retained in
+`../e2e-work/results/host-ubuntu-fixed/`.
+
+A Cargo build started sccache while holding the suite lock. The daemon inherited
+descriptor 8 and retained the lock after the runner finished. The build
+subprocess now closes that descriptor; its parent continues holding the lock
+through all VM stages. Runner tests reject any lock descriptor inherited by
+their fake Cargo command.
+
+The final full host-Arch flow passed: boot/dry-run, installation, expanded
+host snapshots, clean source shutdown, target extraction and the complete
+standalone verification (including active swap). Evidence is retained in
+`../e2e-work/results/host-arch-final-install/` and
+`../e2e-work/results/host-arch-final-verify/`.
+
+The final encrypted full flow completed installation, clean shutdown/reboot,
+both unlock matches and login before failing the unchanged blueman assertion.
+Evidence is retained in `../e2e-work/results/encrypted-final-full/`. All these
+runs selected KVM automatically. Final local checks passed 37 Python tests,
+48 Perl assertions, Bash/Perl syntax, shellcheck, actionlint and Rust formatting;
+instantCLI passed `cargo check` and 1,384 unit tests (one ignored).

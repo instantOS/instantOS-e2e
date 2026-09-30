@@ -2,7 +2,7 @@ name: e2e
 run-name: "e2e: instantCLI ${{ inputs.product_ref || 'main' }} [${{ inputs.profile || 'minimal' }}][${{ github.event_name == 'schedule' && 'live+offline' || inputs.flow || 'live' }}]${{ inputs.smoke == true && ' (smoke)' || '' }}"
 on:
   schedule:
-    # Nightly; TCG (no KVM on hosted runners) so the full install takes ~1 h.
+    # Nightly; the runner uses KVM when available and otherwise falls back to TCG.
     # Every nightly runs two jobs in parallel on separate runners:
     #   install-e2e   the online install, from the stock Arch ISO
     #   offline-e2e   a networkless install, from the *published* instantOS
@@ -51,15 +51,12 @@ jobs:
     # published artifact instead of a checkout, so it needs no instantCLI
     # build. This one covers the online install and the non-live flows.
     if: github.event_name == 'schedule' || inputs.flow != 'offline'
-    name: ins arch install e2e (${{ inputs.flow || 'live' }}, isotovideo, TCG)
+    name: ins arch install e2e (${{ inputs.flow || 'live' }}, isotovideo)
     runs-on: ubuntu-26.04
     timeout-minutes: 240
-    # host-ubuntu is red by design against instantCLI dev: it asserts that
-    # `ins arch exec` refuses a foreign distro *before* touching the target
-    # disk, and exec has no host-profile gate — only `ins arch install` has
-    # one, and this flow does not use it. Run it and publish the failure as
-    # the signal it is, rather than letting it mask a real regression in the
-    # other flows. See casedir/tests/host_install.pm and docs/FINDINGS.md.
+    # Older product refs lack the foreign-host gate in `ins arch exec`.
+    # The run step recognizes only that documented failure; preparation, boot,
+    # host preservation and other product failures remain fatal.
     env:
       E2E_MEDIA_DIR: ${{ github.workspace }}/e2e-media
       E2E_WORK_DIR: ${{ github.workspace }}/e2e-work
