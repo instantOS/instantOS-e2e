@@ -4,6 +4,7 @@ set -euo pipefail
 REPO_ROOT=$(cd "$(dirname "$0")/.." && pwd)
 . "$REPO_ROOT/tools/lib/isotovideo.sh"
 . "$REPO_ROOT/tools/lib/fixtures.sh"
+. "$REPO_ROOT/tools/lib/arguments.sh"
 case "${1:-}" in
     bootcap|verifydisk|liveiso) HARNESS=$1; shift ;;
     *) echo 'Usage: tools/run-diagnostic.sh bootcap|verifydisk DISK.raw [OPTIONS] [VAR=VALUE ...]' >&2
@@ -41,11 +42,7 @@ while [ "$#" -gt 0 ]; do
             case "$1" in minimal|full|encrypted) VARS[E2E_PROFILE]=$1 ;; *) echo "Invalid profile: $1" >&2; exit 2 ;; esac ;;
         *=*)
             key=${1%%=*}
-            [[ $key =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { echo "Invalid variable: $key" >&2; exit 2; }
-            case "${key^^}" in
-                CASEDIR|NEEDLES_DIR|ISO|HDD_*|BOOTFROM|E2E_*|OFFLINE_SUT|QEMU_NO_KVM)
-                    echo "$key is controlled by the diagnostic runner" >&2; exit 2 ;;
-            esac
+            validate_override "$HARNESS" "$1" || exit $?
             VARS[${key^^}]=${1#*=} ;;
         *) echo "Unknown argument: $1" >&2; exit 2 ;;
     esac
@@ -63,4 +60,7 @@ if [ "$HARNESS" = liveiso ]; then
     MOUNTS+=(-v "$E2E_MEDIA_DIR:/media:ro")
 fi
 lock_suite
+if [ "$HARNESS" != liveiso ]; then
+    assert_harness_input_safe "$REPO_ROOT/diag/$HARNESS" "$DISK"
+fi
 run_isotovideo "$REPO_ROOT/diag/$HARNESS" VARS MOUNTS

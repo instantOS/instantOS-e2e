@@ -92,6 +92,11 @@ class RunnerTests(unittest.TestCase):
         return subprocess.run(['bash', str(self.repo / 'run.sh'), *args],
                               env={**self.env, **env}, text=True, capture_output=True, timeout=20)
 
+    def run_diagnostic(self, harness, *args, **env):
+        return subprocess.run(['bash', str(self.repo / 'tools/run-diagnostic.sh'),
+                               harness, *map(str, args)], env={**self.env, **env},
+                              text=True, capture_output=True, timeout=20)
+
     def calls(self, command):
         log = self.base / 'calls.jsonl'
         return [args for name, args in map(json.loads, log.read_text().splitlines())
@@ -219,6 +224,76 @@ class RunnerTests(unittest.TestCase):
                                 env=self.env, text=True, capture_output=True, timeout=20)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('E2E_PROFILE=encrypted', self.calls('docker')[0])
+
+    def test_diagnostic_rejects_inputs_that_cleanup_would_delete(self):
+        for harness in ('verifydisk', 'bootcap'):
+            for state in ('raid', 'testresults', 'ulogs'):
+                with self.subTest(harness=harness, state=state):
+                    directory = self.repo / 'diag' / harness / state
+                    directory.mkdir(exist_ok=True)
+                    disk = directory / 'preserved.raw'
+                    disk.write_bytes(b'preserved disk')
+                    # Resolve symlinks too: an external-looking input can still
+                    # refer to a file inside the harness's cleanup directories.
+                    alias = self.base / 'input.raw'
+                    alias.unlink(missing_ok=True)
+                    alias.symlink_to(disk)
+                    for input_path in (disk, alias):
+                        result = self.run_diagnostic(harness, input_path)
+                        self.assertEqual(result.returncode, 2, result.stderr)
+                        self.assertIn('would be deleted', result.stderr)
+                        self.assertEqual(disk.read_bytes(), b'preserved disk')
+                        self.assertFalse(self.calls('docker'))
+                        self.assertFalse(self.calls('sudo'))
+
+    def test_diagnostic_accepts_disk_outside_cleanup_directories(self):
+        disk = self.repo / 'diag/verifydisk/raid-preserved/input.raw'
+        disk.parent.mkdir()
+        disk.write_bytes(b'preserved disk')
+        self.stale('diag/verifydisk')
+        result = self.run_diagnostic('verifydisk', disk)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(disk.read_bytes(), b'preserved disk')
+        self.assertEqual(len(self.calls('docker')), 1)
+
+    def test_shared_overrides_are_normalized_by_both_runners(self):
+        disk = self.base / 'installed.raw'
+        disk.write_bytes(b'disk')
+        overrides = ('qemucpus=3', 'qemuram=2048', 'hddsizegb=24',
+                     'storage_keep_free_gb=5')
+        for run in (lambda: self.run_suite('--flow', 'offline', *overrides),
+                    lambda: self.run_diagnostic('verifydisk', disk, *overrides)):
+            result = run()
+            self.assertEqual(result.returncode, 0, result.stderr)
+            for override in overrides:
+                key, value = override.split('=', 1)
+                self.assertIn(f'{key.upper()}={value}', self.calls('docker')[-1])
+
+    def test_unsupported_overrides_fail_in_both_runners(self):
+        disk = self.base / 'installed.raw'
+        disk.write_bytes(b'disk')
+        for override in ('NUMDISKS=2', 'NICMODEL=e1000', 'KERNEL=other',
+                         'INITRD=other', 'APPEND=other', 'QEMU_EXTRA_ARGS=other',
+                         'UNKNOWN=1', 'UEFI=1', 'bad-name=1'):
+            with self.subTest(override=override):
+                for result in (self.run_suite('--flow', 'offline', override),
+                               self.run_diagnostic('verifydisk', disk, override)):
+                    self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertFalse(self.calls('docker'))
+
+    def test_diagnostic_context_exceptions(self):
+        disk = self.base / 'installed.raw'
+        disk.write_bytes(b'disk')
+        for harness in ('verifydisk', 'bootcap'):
+            result = self.run_diagnostic(harness, disk, 'password=custom')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('PASSWORD=custom', self.calls('docker')[-1])
+        result = self.run_diagnostic('liveiso', 'uefi=1',
+                                     E2E_ISO_NAME='instantos-offline-latest.iso')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('UEFI=1', self.calls('docker')[-1])
+        result = self.run_diagnostic('liveiso', 'PASSWORD=custom')
+        self.assertEqual(result.returncode, 2, result.stderr)
 
     def test_lock_prevents_concurrent_runs(self):
         import fcntl

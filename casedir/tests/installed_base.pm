@@ -1,14 +1,5 @@
-# Shared helpers for verifying an already-installed system. Used by
-# casedir/tests/verify.pm (main suite) and
-# diag/verifydisk/tests/verifydisk.pm (offline disk harness). Keeping the
-# login dance and the assertion suite in one place stops them from drifting
-# apart between the two callers — which is exactly how a stale
-# `linux-firmware` assert survived in one copy after the installer switched
-# to firmware vendor splits.
-#
-# Where to find this module: the main suite mounts casedir/ at /tests
-# (run.sh), the diag harnesses mount it read-only at /casedir (see
-# diag/README.md) — hence the two-element `use lib` in the callers.
+# Installed-system login and assertions shared by the main and diagnostic
+# harnesses. Callers load this through /tests/tests or /casedir/tests.
 package installed_base;
 use Mojo::Base -strict;
 use Exporter 'import';
@@ -165,10 +156,7 @@ sub verify_installed_system {
         assert_script_run('grep -q "^Theme=instantos" /etc/plymouth/plymouthd.conf', 60);
         assert_script_run('grep -q "^HOOKS=.*systemd" /etc/mkinitcpio.conf', 60);
         assert_script_run('grep -q "^HOOKS=.*plymouth" /etc/mkinitcpio.conf', 60);
-        # Read the image with the image's own lsinitcpio: bsdtar -tf only
-        # sees the leading uncompressed early-microcode cpio segment and
-        # never reaches the compressed main archive, which made a good
-        # install (theme verified embedded) look themeless.
+        # lsinitcpio reads both the early microcode and compressed main archive.
         assert_script_run('lsinitcpio /boot/initramfs-linux.img | grep -q "plymouth/themes/instantos"', 120);
         assert_script_run('grep -q "^GRUB_THEME=" /etc/default/grub', 60);
         assert_script_run('test -f /usr/share/grub/themes/instantos/theme.txt', 60);

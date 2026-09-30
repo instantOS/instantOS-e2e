@@ -58,14 +58,9 @@ fi
 if [ "$RELEASE" -eq 1 ] && [ "$FLOW" != live ]; then
     echo '--release requires --flow live' >&2; exit 2
 fi
-# Reject overrides that would contradict the flow selected on the host.
+. "$REPO_ROOT/tools/lib/arguments.sh"
 for kv in "${PASSTHROUGH[@]}"; do
-    key=${kv%%=*}
-    [[ $key =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { echo "Invalid variable: $key" >&2; exit 2; }
-    case "${key^^}" in
-        E2E_*|PASSWORD|CASEDIR|NEEDLES_DIR|ISO|HDD_*|NUMDISKS|KERNEL|INITRD|APPEND|BOOTFROM|OFFLINE_SUT|NICTYPE|NIC*|QEMU_NO_KVM)
-            echo "$key is controlled by the suite; use flags instead" >&2; exit 2 ;;
-    esac
+    validate_override install "$kv" || exit $?
 done
 . "$REPO_ROOT/tools/lib/paths.sh"
 . "$REPO_ROOT/tools/lib/fixtures.sh"

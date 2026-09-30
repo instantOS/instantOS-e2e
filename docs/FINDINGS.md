@@ -641,3 +641,37 @@ The blank-target assertion correctly failed. This reproduces the documented
 missing foreign-host gate with a valid fixture, rather than accidentally
 passing on a configuration error. Evidence is retained in
 `../e2e-work/review-results/host-ubuntu-final/`.
+
+## Live ISO diagnostic history
+
+The live ISO diagnostic module originally documented investigation runs inline.
+These notes preserve that history; `diag/README.md` describes the current flow.
+
+- The BIOS probe edits the syslinux entry with Tab to add `console=hvc0
+  console=ttyS0`. The UEFI spike boots the default systemd-boot entry and checks
+  the desktop visually. Serial checks require a systemd-boot needle and editor
+  flow (its keys differ from syslinux). Boot screenshots provide future needle
+  material.
+- An early diagnostic using `echo ===x` hit zsh equals expansion. Diagnostic
+  sections consequently use `SECTION_<name>` markers. The shared login helper
+  now switches to Bash before script handshakes.
+- Capturing the wallpaper after killing Welcome did not work: instantwm retained
+  the dead client's surface. The probe now captures the bare desktop after the
+  bar appears and before Welcome. Earlier images also had a wallpaper rendering
+  failure; the pre-Welcome frame was useful evidence.
+- Autostart investigation inspected surviving child environments to explain why
+  `/usr/local/bin` programs such as liveautostart and installapplet left no trace
+  while `/usr/bin` programs ran. PATH and XDG_RUNTIME_DIR remain in diagnostics.
+- Run 2d showed greetd registering the compositor session as `Type=tty`, with
+  instantwm also carrying `XDG_SESSION_TYPE=tty`. Requiring logind `Type=wayland`
+  was an incorrect test assumption; the Wayland runtime socket is the assertion.
+- Run 2c showed live-setup assertions could stop the module before useful evidence
+  was collected. Session and autostart diagnostics therefore precede assertions.
+- The offline Phase 0 spike checked the injected bundle mount, shipped dotfiles
+  snapshot, marker, and file-first mirrorlist. Those checks now live in the shared
+  `assert_offline_bundle` helper.
+
+The installed-system verification helpers were likewise consolidated after a
+copied diagnostic assertion still required `linux-firmware` when the installer
+had switched to vendor splits. Both callers now use the same complete suite.
+The initramfs archive inspection issue is recorded earlier in this file.

@@ -11,13 +11,18 @@ BEGIN {
     our @EXPORT = qw(get_var get_required_var assert_script_run script_run script_output upload_logs
         record_info select_console wait_serial type_string type_password send_key
         power check_shutdown eject_cd assert_screen sleep);
-    our (%vars, @commands, @uploads);
+    our (%vars, @commands, @uploads, $fail_assert, $output_override);
     sub get_var { exists $vars{$_[0]} ? $vars{$_[0]} : $_[1] }
     sub get_required_var { die "Missing $_[0]" unless exists $vars{$_[0]}; $vars{$_[0]} }
-    sub assert_script_run { push @commands, $_[0]; 0 }
+    sub assert_script_run {
+        push @commands, $_[0];
+        die "Guest command failed: $_[0]\n" if $fail_assert && $_[0] =~ $fail_assert;
+        0;
+    }
     sub script_run { push @commands, $_[0]; 0 }
     sub script_output {
         push @commands, $_[0];
+        return $output_override if defined $output_override;
         return Digest::SHA::sha256_hex("offline log\n") . "  /tmp/dryrun.log\n"
             . MIME::Base64::encode_base64("offline log\n", '');
     }
@@ -76,6 +81,18 @@ for my $flow ('host-arch', 'host-ubuntu') {
     ok(!grep($_ eq 'power:reset', @testapi::commands), "$flow does not reboot the source host");
 }
 
+for my $flow ('host-arch', 'host-ubuntu') {
+    %testapi::vars = (E2E_FLOW => $flow, E2E_TARGET_DISK => '/dev/vdb', E2E_INSTALLER => 'checkout');
+    @testapi::commands = ();
+    @testapi::uploads = ();
+    local $testapi::fail_assert = qr{bash /tmp/host-state.sh post};
+    my $ok = eval { host_install::run(undef); 1 };
+    ok(!$ok, "$flow fails when post-install snapshot collection fails");
+    like($@, qr{Guest command failed: bash /tmp/host-state.sh post}, 'snapshot failure is propagated');
+    ok(!grep(m{/tmp/post-host-}, @testapi::uploads), 'failed snapshot is not uploaded as evidence');
+    ok(!grep(/diff -u|power:/, @testapi::commands), 'failed snapshot stops comparison and shutdown');
+}
+
 {
     package boot;
     require './casedir/tests/boot.pm';
@@ -103,6 +120,21 @@ for my $flow ('live', 'offline') {
     is(do {local $/; <$fh>}, "offline log\n", 'offline log bytes are saved over serial');
     close $fh;
     ok(!@testapi::uploads, 'offline evidence collection uses no HTTP upload');
+    for my $output (
+        Digest::SHA::sha256_hex("different bytes") . "  /tmp/dryrun.log\n"
+            . MIME::Base64::encode_base64("offline log\n", ''),
+        Digest::SHA::sha256_hex("offline log\n") . "  /tmp/dryrun.log\n"
+            . MIME::Base64::encode_base64("offline", ''),
+        "missing checksum\n" . MIME::Base64::encode_base64("offline log\n", ''),
+    ) {
+        local $testapi::output_override = $output;
+        my $ok = eval { installer_base::collect_log('/tmp/dryrun.log'); 1 };
+        ok(!$ok, 'corrupt serial transfer fails collection');
+        like($@, qr{Corrupt serial log: /tmp/dryrun.log}, 'corrupt transfer reports its source');
+        open my $saved, '<', 'ulogs/dryrun.log' or die $!;
+        is(do {local $/; <$saved>}, "offline log\n", 'rejected transfer preserves existing evidence');
+        close $saved;
+    }
     chdir $previous or die $!;
 }
 

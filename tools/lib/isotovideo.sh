@@ -8,17 +8,31 @@ lock_suite() {
     flock -n 8 || { echo 'Another VM run is using this checkout' >&2; exit 1; }
 }
 
+# Both cleanup and input protection use this list.
+HARNESS_STATE=(
+    testresults raid ulogs vars.json serial0 virtio_console.log
+    virtio_console_user.log video.ogv video_time.vtt qmp_socket.log
+    autoinst-status.json backend.run base_state.json command-server-tmp
+    os-autoinst.pid qemu.pid qemu_state.json qemuscreenshot
+)
+
+assert_harness_input_safe() {
+    local harness=$1 input=$2 key path
+    input=$(realpath "$input") || return
+    for key in "${HARNESS_STATE[@]}"; do
+        path=$(realpath -m "$harness/$key") || return
+        if [[ $input == "$path" || $input == "$path/"* ]]; then
+            echo "Input disk would be deleted by harness cleanup: $input; copy it outside $harness/$key" >&2
+            return 2
+        fi
+    done
+}
+
 reset_harness() {
     local key
     # Reset logs too, so an early failure cannot publish artifacts of an older run.
-    local -a state=(
-        testresults raid ulogs vars.json serial0 virtio_console.log
-        virtio_console_user.log video.ogv video_time.vtt qmp_socket.log
-        autoinst-status.json backend.run base_state.json command-server-tmp
-        os-autoinst.pid qemu.pid qemu_state.json qemuscreenshot
-    )
     local -a paths=()
-    for key in "${state[@]}"; do paths+=("$1/$key"); done
+    for key in "${HARNESS_STATE[@]}"; do paths+=("$1/$key"); done
     rm -rf -- "${paths[@]}" 2>/dev/null || sudo -n rm -rf -- "${paths[@]}" || return
 }
 

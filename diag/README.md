@@ -25,7 +25,9 @@ E2E_ISO_NAME=instantos-YYYY.MM.DD-x86_64.iso ./tools/run-diagnostic.sh liveiso U
 
 `verifydisk` runs the complete shared post-install verification suite, including
 profile-specific checks. `bootcap` captures the boot/login sequence for needle
-maintenance. Both require a writable raw disk; convert qcow2 first because
+maintenance. Inputs beneath the selected harness's cleanup directories (including `raid/`)
+are rejected before cleanup, including inputs reached through symlinks.
+Both require a writable raw disk; convert qcow2 first because
 os-autoinst treats `HDD_1` as raw backing storage.
 
 `liveiso` checks the instantOS live session: boot menu, pre-Welcome desktop bar,
@@ -34,7 +36,9 @@ live-setup completion. It includes forensic dumps used by [isotests.md](../isote
 UEFI runs boot the default entry and check the desktop visually; serial checks
 need a systemd-boot menu needle and editor flow before they can run on UEFI.
 
-All diagnostics accept `--kvm` and hardware variables such as `QEMUCPUS=4`.
+All diagnostics accept `--kvm` and the shared overrides `QEMUCPUS`, `QEMURAM`,
+`HDDSIZEGB`, and `STORAGE_KEEP_FREE_GB` (names are case insensitive).
+`liveiso` additionally accepts `UEFI=1`. Other overrides are rejected.
 Disk diagnostics can use `PASSWORD=...` for a preserved disk with a different
 credential. `--offline` also disables the NIC; use it for verifying a target
 installed offline. Artifacts land under `diag/<harness>/`, including screenshots,

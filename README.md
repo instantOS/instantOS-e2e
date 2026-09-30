@@ -72,9 +72,9 @@ so builds do not rely on free space in `/tmp`.
 
 Login credentials are read from the selected questions fixture. Host bundles
 use the minimal fixture credential; rebuild them after changing that fixture.
-Hardware tuning can use `VAR=VALUE` arguments;
-scenario, boot-device, networking and credential variables are controlled by
-the runner and cannot be overridden independently.
+Supported `VAR=VALUE` overrides are `QEMUCPUS`, `QEMURAM`, `HDDSIZEGB`, and
+`STORAGE_KEEP_FREE_GB` (names are case insensitive). Other variables are rejected;
+scenario, boot-device, networking and credentials are selected by the runner.
 
 ## Harness design
 
