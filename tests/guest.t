@@ -11,7 +11,7 @@ BEGIN {
     our @EXPORT = qw(get_var get_required_var assert_script_run script_run script_output upload_logs
         record_info select_console wait_serial type_string type_password send_key
         power check_shutdown eject_cd assert_screen sleep);
-    our (%vars, @commands, @uploads, $fail_assert, $output_override);
+    our (%vars, @commands, @uploads, $fail_assert, $fail_screen, $output_override);
     sub get_var { exists $vars{$_[0]} ? $vars{$_[0]} : $_[1] }
     sub get_required_var { die "Missing $_[0]" unless exists $vars{$_[0]}; $vars{$_[0]} }
     sub assert_script_run {
@@ -31,12 +31,15 @@ BEGIN {
     sub select_console {}
     sub wait_serial { 1 }
     sub type_string { push @commands, "type:$_[0]" }
-    sub type_password {}
-    sub send_key {}
+    sub type_password { push @commands, "password:" . ($_[0] // 'default') }
+    sub send_key { push @commands, "key:$_[0]" }
     sub power { push @commands, "power:$_[0]" }
     sub check_shutdown { push @commands, "shutdown-complete" }
     sub eject_cd { push @commands, "eject" }
-    sub assert_screen {}
+    sub assert_screen {
+        push @commands, "screen:$_[0]:$_[1]";
+        die "Screen timeout: $_[0]\n" if $fail_screen && $_[0] eq $fail_screen;
+    }
     sub sleep {}
     $INC{'testapi.pm'} = 1;
 }
@@ -144,6 +147,27 @@ for my $flow ('live', 'offline') {
     my @lifecycle = grep { /^(?:power:|shutdown-complete|eject)/ } @testapi::commands;
     is_deeply(\@lifecycle, ['power:acpi', 'shutdown-complete', 'eject', 'power:reset'],
         'live root keeps its ISO until shutdown completes, then boots the target');
+}
+
+{
+    require installed_base;
+    %testapi::vars = (PASSWORD => 'login-only', ENCRYPTION_PASSWORD => 'encryption-only');
+    @testapi::commands = ();
+    installed_base::unlock_encrypted_system();
+    is_deeply(\@testapi::commands, [
+        'screen:grub-unlock:900', 'password:encryption-only', 'key:ret',
+        'screen:initramfs-unlock:900', 'password:encryption-only', 'key:ret',
+    ], 'each unlock prompt is detected before submitting its own fixture password');
+    for my $stage ('grub-unlock', 'initramfs-unlock') {
+        @testapi::commands = ();
+        local $testapi::fail_screen = $stage;
+        my $ok = eval { installed_base::unlock_encrypted_system(120); 1 };
+        ok(!$ok, "$stage timeout fails encrypted boot");
+        like($@, qr/Screen timeout: $stage/, 'timeout identifies the unlock stage');
+        is(scalar(grep { /^password:/ } @testapi::commands), $stage eq 'grub-unlock' ? 0 : 1,
+            'a missing prompt prevents further password submission');
+        like($testapi::commands[-1], qr/:120$/, 'the prompt wait has a bounded timeout');
+    }
 }
 
 done_testing();

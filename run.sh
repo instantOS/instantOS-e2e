@@ -82,6 +82,9 @@ declare -A VARS=(
     [PASSWORD]=$VM_PASSWORD
     [E2E_FLOW]=$FLOW [E2E_PROFILE]=$PROFILE [E2E_INSTALLER]=$INSTALLER
 )
+if [ "$PROFILE" = encrypted ]; then
+    VARS[ENCRYPTION_PASSWORD]=$(fixture_encryption_password "$PROFILE")
+fi
 MOUNTS=(-v "$REPO_ROOT/assets:/tests/assets:ro")
 if [[ $FLOW == host-* ]]; then
     DISTRO=${FLOW#host-}

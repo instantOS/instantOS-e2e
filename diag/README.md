@@ -41,6 +41,7 @@ Diagnostics use KVM automatically when available. `--kvm` requires it and
 `HDDSIZEGB`, and `STORAGE_KEEP_FREE_GB` (names are case insensitive).
 `liveiso` additionally accepts `UEFI=1`. Other overrides are rejected.
 Disk diagnostics can use `PASSWORD=...` for a preserved disk with a different
-credential. `--offline` also disables the NIC; use it for verifying a target
+credential; `ENCRYPTION_PASSWORD=...` independently selects its unlock passphrase.
+Both default to the selected questions fixture. `--offline` also disables the NIC; use it for verifying a target
 installed offline. Artifacts land under `diag/<harness>/`, including screenshots,
 module results, serial logs and uploaded guest logs.

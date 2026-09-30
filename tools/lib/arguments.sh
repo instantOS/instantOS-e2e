@@ -8,7 +8,7 @@ validate_override() {
     }
     case "$context:${key^^}" in
         *:QEMUCPUS|*:QEMURAM|*:HDDSIZEGB|*:STORAGE_KEEP_FREE_GB|\
-        verifydisk:PASSWORD|bootcap:PASSWORD|liveiso:UEFI) return 0 ;;
+        verifydisk:PASSWORD|bootcap:PASSWORD|verifydisk:ENCRYPTION_PASSWORD|bootcap:ENCRYPTION_PASSWORD|liveiso:UEFI) return 0 ;;
     esac
     echo "Unsupported override: $key; use runner flags for scenario settings" >&2
     return 2

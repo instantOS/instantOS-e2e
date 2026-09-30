@@ -5,7 +5,21 @@ use Mojo::Base -strict;
 use Exporter 'import';
 use testapi;
 
-our @EXPORT_OK = qw(login_installed_system assert_core_suite verify_installed_system);
+our @EXPORT_OK = qw(unlock_encrypted_system login_installed_system assert_core_suite verify_installed_system);
+
+# GRUB decryption can be slow even with KVM. Wait for each prompt so subsequent
+# password characters cannot be queued into the boot menu while GRUB decrypts.
+sub unlock_encrypted_system {
+    my ($timeout) = @_;
+    $timeout //= 900;
+    my $password = get_required_var('ENCRYPTION_PASSWORD');
+    assert_screen 'grub-unlock', $timeout;
+    type_password($password);
+    send_key 'ret';
+    assert_screen 'initramfs-unlock', $timeout;
+    type_password($password);
+    send_key 'ret';
+}
 
 # Log in as root on the VGA console and open a root shell on the virtio
 # console for scripted interaction. Works identically right after the
@@ -127,18 +141,7 @@ sub verify_installed_system {
     # install lands on the second disk of the machine it ran on.
     my $disk = get_var('E2E_TARGET_DISK', '/dev/vda');
 
-    # Encrypted installs boot through two passphrase prompts: GRUB
-    # cryptodisk unlock (nothing can be themed there — GRUB has not read any
-    # files yet) and the initramfs sd-encrypt prompt (which Plymouth should
-    # cover). Blind-type the passphrase with retries; a stray password that
-    # lands at the login prompt just fails one login attempt and re-prompts.
-    if ($profile eq 'encrypted') {
-        for my $i (1 .. 3) {
-            sleep 20;
-            type_password;
-            send_key 'ret';
-        }
-    }
+    unlock_encrypted_system($login_timeout) if $profile eq 'encrypted';
 
     login_installed_system($login_timeout);
 

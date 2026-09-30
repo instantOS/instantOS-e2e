@@ -9,7 +9,7 @@ REPO_ROOT=$(cd "$(dirname "$0")/.." && pwd)
 case "${1:-}" in
     bootcap|verifydisk|liveiso) HARNESS=$1; shift ;;
     *) echo 'Usage: tools/run-diagnostic.sh bootcap|verifydisk DISK.raw [OPTIONS] [VAR=VALUE ...]' >&2
-       echo '       tools/run-diagnostic.sh liveiso [--offline] [--kvm] [VAR=VALUE ...]' >&2; exit 2 ;;
+       echo '       tools/run-diagnostic.sh liveiso [--offline] [--kvm|--tcg] [VAR=VALUE ...]' >&2; exit 2 ;;
 esac
 MOUNTS=() DOCKER_ARGS=() ACCELERATION=auto
 declare -A VARS=(
@@ -52,6 +52,9 @@ while [ "$#" -gt 0 ]; do
 done
 configure_acceleration "$ACCELERATION" VARS DOCKER_ARGS
 VARS[PASSWORD]=${VARS[PASSWORD]:-$(fixture_password "${VARS[E2E_PROFILE]}")}
+if [ "${VARS[E2E_PROFILE]}" = encrypted ]; then
+    VARS[ENCRYPTION_PASSWORD]=${VARS[ENCRYPTION_PASSWORD]:-$(fixture_encryption_password encrypted)}
+fi
 if [ "$HARNESS" = liveiso ]; then
     E2E_MEDIA_DIR=${E2E_MEDIA_DIR:-$HOME/e2e-media}
     E2E_ISO_NAME=${E2E_ISO_NAME:?Set E2E_ISO_NAME to the instantOS ISO to boot}

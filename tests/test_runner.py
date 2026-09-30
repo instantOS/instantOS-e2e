@@ -161,6 +161,22 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('PASSWORD=changed-fixture-password', self.calls('docker')[0])
 
+    def test_encryption_credential_is_independent_from_login(self):
+        fixture = self.repo / 'assets/questions-encrypted.toml'
+        fixture.write_text(fixture.read_text().replace(
+            'EncryptionPassword = "correct-horse-battery-staple"',
+            'EncryptionPassword = "encryption-only"'))
+        result = self.run_suite('--flow', 'offline', '--profile', 'encrypted')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('ENCRYPTION_PASSWORD=encryption-only', self.calls('docker')[0])
+        self.assertIn('PASSWORD=correct-horse-battery-staple', self.calls('docker')[0])
+        disk = self.base / 'installed.raw'
+        disk.write_bytes(b'disk')
+        result = self.run_diagnostic('verifydisk', disk, '--profile', 'encrypted',
+                                     'ENCRYPTION_PASSWORD=preserved-disk-password')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('ENCRYPTION_PASSWORD=preserved-disk-password', self.calls('docker')[-1])
+
     def test_invalid_fixture_stops_before_launch(self):
         (self.repo / 'assets/questions-minimal.toml').write_text('invalid toml = [')
         result = self.run_suite('--flow', 'offline')
