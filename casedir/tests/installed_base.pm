@@ -14,7 +14,7 @@ use Mojo::Base -strict;
 use Exporter 'import';
 use testapi;
 
-our @EXPORT_OK = qw(login_installed_system assert_core_suite);
+our @EXPORT_OK = qw(login_installed_system assert_core_suite verify_installed_system);
 
 # Log in as root on the VGA console and open a root shell on the virtio
 # console for scripted interaction. Works identically right after the
@@ -47,7 +47,7 @@ sub login_installed_system {
     wait_serial 'Password:', 60;
     type_password;
     send_key 'ret';
-    wait_serial '# ', 180;
+    script_run('stty cols 4096 rows 100');
 }
 
 # Assertion suite every installed system must pass: boot identity, systemd
@@ -86,12 +86,9 @@ sub assert_core_suite {
     # the root filesystem's ancestry? — for a plain, an LUKS and an LVM root
     # alike. The btrfs subvolume suffix findmnt appends is stripped first.
     #
-    # `-p` (absolute paths) plus a suffix-anchored match, rather than `-r`
-    # (raw) plus an exact match: lsblk prefixes parent devices with box-drawing
-    # characters unless -r is given, and -r is the flag most likely to change
-    # under us. Anchoring on "/<name>$" is correct either way.
+    # Raw absolute paths make the ancestry check an exact device comparison.
     assert_script_run(
-        "findmnt -n -o SOURCE / | sed 's/\\[.*//' | xargs -r lsblk -snpo NAME | grep -q '$disk\$'",
+        "findmnt -n -o SOURCE / | sed 's/\\[.*//' | xargs -r lsblk -snrpo NAME | grep -Fxq '$disk'",
         60,
         fail_message => "the running root filesystem is not on $disk"
     );
@@ -106,17 +103,21 @@ sub assert_core_suite {
     # so assert the always-present catch-all and — this is a VM with no
     # passthrough GPU/NIC vendors — that the big vendor splits stayed out.
     assert_script_run('pacman -Q linux linux-firmware-other grub networkmanager openssh sudo', 60);
-    assert_script_run('! pacman -Q linux-firmware-nvidia linux-firmware-amdgpu', 60);
+    for my $package (qw(linux-firmware-nvidia linux-firmware-amdgpu)) {
+        assert_script_run("! pacman -Q $package", 60);
+    }
     # This VM shape has no bluetooth adapter; the installer must not pull the
     # bluetooth stack (blueman is an optdepends of instantdepend now and is
     # added by the installer only when /sys/class/bluetooth shows an adapter).
-    assert_script_run('! pacman -Q blueman bluez', 60);
+    for my $package (qw(blueman bluez)) {
+        assert_script_run("! pacman -Q $package", 60);
+    }
 
-    # Offline installs (E2E_OFFLINE=1): the finish-time cleanup must have
+    # Offline installs (E2E_FLOW=offline): the finish-time cleanup must have
     # removed every bundle reference, the target must keep a working
     # network mirrorlist, and the [instant] repo must be configured with
     # its unsigned-packages SigLevel (Phase 3 acceptance, offlineiso.md).
-    if (get_var('E2E_OFFLINE')) {
+    if (get_var('E2E_FLOW', 'live') eq 'offline') {
         assert_script_run('! grep -ri "file://" /etc/pacman.conf /etc/pacman.d/', 60,
             fail_message => 'file:// bundle references survived the offline cleanup');
         assert_script_run('grep -q "^Server" /etc/pacman.d/mirrorlist', 60,
@@ -124,6 +125,79 @@ sub assert_core_suite {
         assert_script_run('grep -q "^\[instant\]" /etc/pacman.conf', 60);
         assert_script_run('grep -A2 "^\[instant\]" /etc/pacman.conf | grep -q "Optional TrustAll"', 60);
     }
+}
+
+
+sub verify_installed_system {
+    my ($login_timeout) = @_;
+    my $profile = get_var('E2E_PROFILE', 'minimal');
+    # Which disk the install targeted. /dev/vda for the live-ISO flow and for
+    # the diag/verifydisk harness; /dev/vdb for the --host-* flows, where the
+    # install lands on the second disk of the machine it ran on.
+    my $disk = get_var('E2E_TARGET_DISK', '/dev/vda');
+
+    # Encrypted installs boot through two passphrase prompts: GRUB
+    # cryptodisk unlock (nothing can be themed there — GRUB has not read any
+    # files yet) and the initramfs sd-encrypt prompt (which Plymouth should
+    # cover). Blind-type the passphrase with retries; a stray password that
+    # lands at the login prompt just fails one login attempt and re-prompts.
+    if ($profile eq 'encrypted') {
+        for my $i (1 .. 3) {
+            sleep 20;
+            type_password;
+            send_key 'ret';
+        }
+    }
+
+    login_installed_system($login_timeout);
+
+    assert_core_suite();
+
+    # --- theming chain (full/encrypted profiles) -------------------------
+    # Plymouth runs from the initramfs, so the theme must be embedded in the
+    # initramfs IMAGE — a theme only present on the (encrypted) root cannot
+    # cover the passphrase prompt. This assert is the regression detector for
+    # exactly that. The instantOS theme packages arrive transitively:
+    # instantdepend -> plymouth-theme-instantos, instantos -> grub-instantos.
+    if ($profile ne 'minimal') {
+        assert_script_run('grep -q "^ID=instantos" /etc/os-release', 60);
+        assert_script_run('pacman -Q plymouth plymouth-theme-instantos grub-instantos instantos', 60);
+        assert_script_run('grep -q "^Theme=instantos" /etc/plymouth/plymouthd.conf', 60);
+        assert_script_run('grep -q "^HOOKS=.*systemd" /etc/mkinitcpio.conf', 60);
+        assert_script_run('grep -q "^HOOKS=.*plymouth" /etc/mkinitcpio.conf', 60);
+        # Read the image with the image's own lsinitcpio: bsdtar -tf only
+        # sees the leading uncompressed early-microcode cpio segment and
+        # never reaches the compressed main archive, which made a good
+        # install (theme verified embedded) look themeless.
+        assert_script_run('lsinitcpio /boot/initramfs-linux.img | grep -q "plymouth/themes/instantos"', 120);
+        assert_script_run('grep -q "^GRUB_THEME=" /etc/default/grub', 60);
+        assert_script_run('test -f /usr/share/grub/themes/instantos/theme.txt', 60);
+        # On failure dump what grub-mkconfig actually emitted: distinguishes
+        # "theme never emitted" from "emitted but asset not loadable"
+        # (00_header insmods png but not jpeg — the instantos theme's
+        # background is a JPG, so the background silently fails to render).
+        assert_script_run('grep -q "instantos" /boot/grub/grub.cfg || { echo "=== /etc/default/grub ==="; cat /etc/default/grub; echo "=== grub.cfg gfx lines ==="; grep -nE "insmod|theme|terminal_output|gfxmode|loadfont" /boot/grub/grub.cfg | head -30; false; }', 60);
+    }
+
+    # --- encrypted layout (encrypted profile) ----------------------------
+    if ($profile eq 'encrypted') {
+        assert_script_run('grep -q "GRUB_ENABLE_CRYPTODISK=y" /etc/default/grub', 60);
+        assert_script_run('grep -q "rd.luks" /boot/grub/grub.cfg', 60);
+        assert_script_run('grep -q "^HOOKS=.*sd-encrypt" /etc/mkinitcpio.conf', 60);
+        assert_script_run("lsblk -no TYPE $disk" . '2 | grep -q crypt', 60);
+        # root must come from the mapper (LVM inside LUKS), not the raw device
+        assert_script_run('findmnt -n -o SOURCE / | grep -q /dev/mapper/', 60);
+    }
+
+    # Network actually works (slirp gateway answers). The offline scenario
+    # runs with OFFLINE_SUT=1 — there is no gateway, and the absence of any
+    # file:// bundle reference (asserted in installed_base) is the
+    # network-related proof.
+    unless (get_var('E2E_FLOW', 'live') eq 'offline') {
+        assert_script_run('ping -c1 -W5 10.0.2.2', 120);
+    }
+
+    record_info('verify', 'installed-system verification suite passed');
 }
 
 1;

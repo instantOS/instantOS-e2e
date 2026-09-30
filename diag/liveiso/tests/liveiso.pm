@@ -11,7 +11,7 @@
 #      while the screen console keeps screenshots rolling (~5 min under TCG)
 #   3. log in as root on hvc0 (empty password), run forensics
 #   4. strict asserts: session, X/XWayland, wallpaper (swaybg), live setup
-#   5. E2E_OFFLINE=1: Phase 0 spike asserts for the offline-injected ISO
+#   5. --offline: Phase 0 spike asserts for the offline-injected ISO
 #      (offlineiso.md): the xorriso-injected bundle is mounted where the
 #      installer probes it, and the offline image wiring shipped
 #
@@ -27,9 +27,11 @@
 # with `=` — an earlier `echo ===x` run died on equals-expansion).
 use Mojo::Base 'basetest';
 use testapi;
+use lib '/tests/tests', '/casedir/tests';
+use installer_base qw(login_instant_iso assert_offline_bundle);
 
 sub run {
-    my $offline = get_var('E2E_OFFLINE');
+    my $offline = get_var('E2E_FLOW', 'live') eq 'offline';
     my $uefi    = get_var('UEFI');
 
     if ($uefi) {
@@ -74,35 +76,7 @@ sub run {
         return;
     }
 
-    # --- hand over to the virtio serial console ---------------------------
-    select_console('root-console');
-
-    # If the hvc0 getty banner was printed before this console attached (or
-    # is just late), poke it until it repaints. An empty line at the login
-    # prompt only re-prompts.
-    my $got_login = 0;
-    for (1 .. 40) {
-        $got_login = wait_serial('instantlive login:', timeout => 15, quiet => 1);
-        last if $got_login;
-        type_string "\n";
-    }
-    die 'no getty on hvc0 (console=hvc0 did not produce a serial login)'
-        unless $got_login;
-
-    # root has an empty password on the live image (overlay /etc/shadow).
-    type_string "root\n";
-    wait_serial('# ', 300);
-    # Root's login shell is zsh, which is hostile to os-autoinst's script_run
-    # markers: the marker is md5_base64(cmd) with `/` substituted to `~`
-    # (hashed_string()), so ~1/64 of commands get a marker starting with `~`
-    # → zsh tilde-expansion dies with "no such user or named directory" →
-    # marker never prints → the command times out and kills the test (seen
-    # live: marker `~6rU_`). zsh also eats words starting with `=` (its
-    # equals-expansion). bash leaves unmatched ~words and =words literal, so
-    # continue under bash --norc (default bash prompt still ends in "# ").
-    type_string "exec bash --norc\n";
-    wait_serial('# ', 60);
-    script_run('stty cols 400 rows 100', timeout => 60);
+    login_instant_iso();
 
     # --- forensics first: echoed on this console, lands in virtio_console.log
     # --- (kept before the strict asserts so a failing assert still leaves
@@ -182,7 +156,7 @@ sub run {
     assert_script_run('pgrep -u instantos -x swaybg',                       timeout => 60,
         fail_message => 'wallpaper not applied (swaybg missing or appearance.wallpaper_path unset)');
 
-    # --- E2E_OFFLINE=1: Phase 0 spike (offlineiso.md) ----------------------
+    # --- --offline: Phase 0 spike (offlineiso.md) ----------------------
     # The xorriso-injected bundle must be mounted exactly where the
     # installer probes it (/run/archiso/bootmnt), and the offline image
     # wiring (marker, dotfiles snapshot, file://-first mirrorlist) shipped.
@@ -191,25 +165,7 @@ sub run {
              . 'ls /run/archiso/bootmnt/offline-repo/core/os/x86_64/ 2>&1 | head -3; '
              . 'wc -l /run/archiso/bootmnt/offline-repo/packages.list 2>&1; '
              . 'grep -m1 "^Server" /etc/pacman.d/mirrorlist', timeout => 120);
-        assert_script_run(
-            'test -e /run/archiso/bootmnt/offline-repo/core/os/x86_64/core.db',
-            timeout => 60,
-            fail_message => 'offline bundle not mounted at /run/archiso/bootmnt '
-                . '(this path is the installer\'s entire offline probe)'
-        );
-        assert_script_run('test -e /run/archiso/bootmnt/offline-repo/packages.list', timeout => 60);
-        assert_script_run('test -e /run/archiso/bootmnt/offline-repo/regions/regions.html', timeout => 60);
-        assert_script_run('test -e /usr/share/instantos/offline-image', timeout => 60,
-            fail_message => 'offline-image marker missing: this is not the offline image build');
-        assert_script_run('test -e /usr/share/instantos/build-inputs/dotfiles/.git/config',
-            timeout => 60,
-            fail_message => 'dotfiles snapshot missing: instantos-setup deleted '
-                . 'build-inputs despite the offline-image marker');
-        assert_script_run(
-            'grep -m1 "^Server" /etc/pacman.d/mirrorlist | grep -Fq "file:///run/archiso/bootmnt/offline-repo"',
-            timeout => 60,
-            fail_message => 'the shipped mirrorlist does not prefer the offline bundle'
-        );
+        assert_offline_bundle();
         record_info('offline', 'bundle mounted, snapshot shipped, mirrorlist prefers file://');
     }
 

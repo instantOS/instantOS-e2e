@@ -6,8 +6,8 @@
 # the encrypted partition: at boot the VM asks for the passphrase TWICE
 # (once for GRUB, once for the initramfs) — tests/verify.pm handles that.
 #
-# Hand-editable on purpose: `ins arch exec --trust-config` accepts configs
-# without dependency-provenance records (answers are still validated).
+# Hand-authored configs omit wizard provenance; `ins arch exec` still
+# validates their answers before execution.
 completed_steps = []
 step_dependency_fingerprints = {}
 

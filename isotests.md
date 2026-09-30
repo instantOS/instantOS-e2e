@@ -1,3 +1,7 @@
+> **Current commands:** see [diag/README.md](diag/README.md). The investigation
+> below preserves historical examples. Diagnostics now use
+> `tools/run-diagnostic.sh` and share the main runner's lifecycle and lock.
+
 # instantOS live ISO — e2e testing investigation (`isotests.md`)
 
 Research log and recommendation for boot-testing the instantOS live ISO with

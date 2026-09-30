@@ -1,90 +1,41 @@
 # Diagnostic harnesses
 
-One-off harnesses used while debugging the suite. Not part of the regular
-run (`run.sh` ignores this directory).
-
-Both harnesses share the login/assert code (`casedir/tests/installed_base.pm`)
-and the needles with the main suite: the docker commands below mount
-`casedir/` read-only at `/casedir` and point `NEEDLES_DIR` at its needles.
-Run them from the harness directory (`diag/bootcap` / `diag/verifydisk`) —
-isotovideo writes its run state into the casedir it is given.
-
-## bootcap
-
-Boots an **already installed** disk image and screenshots the boot sequence —
-used to create/refresh the `installed-*` needles without reinstalling.
+Run diagnostics from the repository root with the shared launcher. It locks
+the checkout, clears the selected harness's runtime state, launches isotovideo,
+and restores artifact ownership, just like `run.sh`.
 
 ```sh
-# 1. copy the VM disk out of a run (raw images or converted qcow2 both work;
-#    the file must be WRITABLE — a read-only bind mount makes SeaBIOS fail
-#    with "could not read the boot disk"). From the repo root:
-qemu-img convert -O raw casedir/raid/hd0 diag/bootcap/raid/hd0
+# Preserve the last target outside raid/: each launch deletes its own raid/.
+mkdir -p ../e2e-work/work
+qemu-img convert -O raw casedir/raid/hd0 ../e2e-work/work/installed.raw
+# A running-Arch install's target is casedir/raid/hd1 instead.
 
-# 2. boot it (from diag/bootcap)
-docker run --rm -w /tests --network host \
-  -v "$PWD":/tests -v "$PWD/../../casedir":/casedir:ro \
-  registry.opensuse.org/devel/openqa/containers/isotovideo:qemu-x86 \
-  --exit-status-from-test-results qemu_no_kvm=1 casedir=/tests \
-  NEEDLES_DIR=/casedir/needles \
-  distri=arch version=202609 QEMUCPUS=8 QEMURAM=4096 BOOTFROM=c \
-  HDD_1=/tests/raid/hd0 PASSWORD=... > run.log 2>&1
+./tools/run-diagnostic.sh verifydisk ../e2e-work/work/installed.raw
+./tools/run-diagnostic.sh verifydisk ../e2e-work/work/installed.raw --profile full
+./tools/run-diagnostic.sh verifydisk ../e2e-work/work/installed.raw --profile encrypted
+./tools/run-diagnostic.sh bootcap ../e2e-work/work/installed.raw
+
+E2E_MEDIA_DIR=../instantOS/iso/build/iso \
+E2E_ISO_NAME=instantos-YYYY.MM.DD-x86_64.iso ./tools/run-diagnostic.sh liveiso
+# Offline ISO: also check the bundle, snapshot and file://-first mirrorlist.
+E2E_ISO_NAME=instantos-offline-latest.iso ./tools/run-diagnostic.sh liveiso --offline
+# UEFI live-session spike (visual assertions only):
+E2E_ISO_NAME=instantos-YYYY.MM.DD-x86_64.iso ./tools/run-diagnostic.sh liveiso UEFI=1
 ```
 
-## verifydisk
+`verifydisk` runs the complete shared post-install verification suite, including
+profile-specific checks. `bootcap` captures the boot/login sequence for needle
+maintenance. Both require a writable raw disk; convert qcow2 first because
+os-autoinst treats `HDD_1` as raw backing storage.
 
-Same boot, but runs the full post-install verification suite instead of
-capturing — the fastest way to iterate on the verification asserts without
-reinstalling (minutes, not ~35 min).
+`liveiso` checks the instantOS live session: boot menu, pre-Welcome desktop bar,
+Welcome window, greetd, Wayland socket, absence of Xorg, swaybg wallpaper, and
+live-setup completion. It includes forensic dumps used by [isotests.md](../isotests.md).
+UEFI runs boot the default entry and check the desktop visually; serial checks
+need a systemd-boot menu needle and editor flow before they can run on UEFI.
 
-```sh
-# From the repo root: copy out the disk of the last full run (writable!)
-qemu-img convert -O raw casedir/raid/hd0 diag/verifydisk/raid/hd0
-
-# Then boot it (from diag/verifydisk)
-docker run --rm -w /tests --network host \
-  -v "$PWD":/tests -v "$PWD/../../casedir":/casedir:ro \
-  registry.opensuse.org/devel/openqa/containers/isotovideo:qemu-x86 \
-  --exit-status-from-test-results qemu_no_kvm=1 casedir=/tests \
-  NEEDLES_DIR=/casedir/needles \
-  distri=arch version=202609 QEMUCPUS=8 QEMURAM=4096 BOOTFROM=c \
-  HDD_1=/tests/raid/hd0 PASSWORD=... > run.log 2>&1
-```
-
-## liveiso
-
-Boots the **instantOS live ISO** (not the Arch installer ISO) and asserts the
-live session: boot menu, bare-desktop bar in the pre-Welcome gap, Welcome TUI,
-then the full strict set over the serial console (greetd, Wayland socket,
-Xorg absent, swaybg wallpaper, live-setup marker + NetworkManager). This is
-the harness behind `isotests.md` (repo root) — read that for the full
-research log, needle lessons and known instantwm/ISO findings.
-
-```sh
-# boot a locally built ISO (from diag/liveiso)
-E2E_MEDIA_DIR=../../instantOS/iso/build/iso \
-E2E_ISO_NAME=instantos-YYYY.MM.DD-x86_64.iso ./run.sh
-
-# offline-injected ISO: additionally asserts the xorriso-injected bundle is
-# mounted where `ins` probes it, the dotfiles snapshot shipped and the
-# mirrorlist prefers file:// (Phase 0 spike of offlineiso.md)
-... ./run.sh E2E_OFFLINE=1
-
-# UEFI (OVMF): boots the default systemd-boot entry; desktop-needle asserts
-# only (no serial console without a menu edit — see tests/liveiso.pm header)
-... ./run.sh UEFI=1 [E2E_OFFLINE=1]
-```
-
-## Repairing a broken install offline
-
-```sh
-sudo modprobe nbd max_part=8
-sudo qemu-nbd --connect=/dev/nbd0 <disk.img>
-sudo mount /dev/nbd0p2 /mnt/e2e-inspect
-sudo chroot /mnt/e2e-inspect /usr/bin/grub-mkconfig -o /boot/grub/grub.cfg
-sudo umount /mnt/e2e-inspect && sudo qemu-nbd --disconnect /dev/nbd0
-```
-
-Watch out: os-autoinst attaches provided `HDD_1` images as **raw** backing
-files — convert qcow2 to raw first (`qemu-img convert -O raw`), or the
-resulting overlay will read garbage and SeaBIOS reports "not a bootable
-disk".
+All diagnostics accept `--kvm` and hardware variables such as `QEMUCPUS=4`.
+Disk diagnostics can use `PASSWORD=...` for a preserved disk with a different
+credential. `--offline` also disables the NIC; use it for verifying a target
+installed offline. Artifacts land under `diag/<harness>/`, including screenshots,
+module results, serial logs and uploaded guest logs.

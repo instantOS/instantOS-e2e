@@ -1,8 +1,8 @@
 # Minimal VM-friendly configuration for `ins arch exec` e2e tests.
 # TTY-only desktop (no DE/display manager), ext4, no encryption, minimal mode.
 #
-# Hand-editable on purpose: `ins arch exec --trust-config` accepts configs
-# without dependency-provenance records (answers are still validated).
+# Hand-authored configs omit wizard provenance; `ins arch exec` still
+# validates their answers before execution.
 completed_steps = []
 step_dependency_fingerprints = {}
 

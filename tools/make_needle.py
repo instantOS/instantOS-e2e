@@ -19,7 +19,6 @@ def main() -> None:
     nums = [int(x) for x in sys.argv[3:]]
 
     out = Path(__file__).resolve().parents[1] / "casedir" / "needles"
-    shutil.copy(shot, out / f"{tag}.png")
 
     areas = []
     if nums:
@@ -27,6 +26,8 @@ def main() -> None:
             sys.exit("rectangles must be x y w h quadruples")
         for i in range(0, len(nums), 4):
             x, y, w, h = nums[i : i + 4]
+            if x < 0 or y < 0 or w <= 0 or h <= 0:
+                sys.exit("rectangles need nonnegative positions and positive dimensions")
             areas.append(
                 {"xpos": x, "ypos": y, "width": w, "height": h, "type": "match"}
             )
@@ -39,6 +40,8 @@ def main() -> None:
             )
 
     payload = {"area": areas, "tags": [tag]}
+    # Validate first, so bad arguments cannot overwrite an existing fixture.
+    shutil.copy(shot, out / f"{tag}.png")
     (out / f"{tag}.json").write_text(json.dumps(payload, indent=4) + "\n")
     print(f"wrote {out / tag}.png/.json with {len(areas)} area(s)")
 

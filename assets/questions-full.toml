@@ -3,8 +3,8 @@
 # the grub-instantos and plymouth-theme-instantos themes — and enables
 # Plymouth. This is the profile that exercises the theming chain.
 #
-# Hand-editable on purpose: `ins arch exec --trust-config` accepts configs
-# without dependency-provenance records (answers are still validated).
+# Hand-authored configs omit wizard provenance; `ins arch exec` still
+# validates their answers before execution.
 completed_steps = []
 step_dependency_fingerprints = {}
 

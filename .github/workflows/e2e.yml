@@ -60,14 +60,17 @@ jobs:
     # one, and this flow does not use it. Run it and publish the failure as
     # the signal it is, rather than letting it mask a real regression in the
     # other flows. See casedir/tests/host_install.pm and docs/FINDINGS.md.
-    continue-on-error: ${{ inputs.flow == 'host-ubuntu' }}
     env:
       E2E_MEDIA_DIR: ${{ github.workspace }}/e2e-media
       E2E_WORK_DIR: ${{ github.workspace }}/e2e-work
       INSTANTCLI_DIR: ${{ github.workspace }}/instantCLI
+      HOST_BUNDLE: ${{ github.workspace }}/e2e-work/images/${{ inputs.flow == 'host-arch' && 'arch-host' || 'ubuntu-host' }}
     steps:
       - name: Checkout e2e suite
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check harness
+        run: ./tests/run.sh
 
       - name: Checkout instantCLI
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -78,12 +81,12 @@ jobs:
 
       - name: Resolve current ISO checksum
         id: iso
-        # Only the live-ISO flow needs an ISO at all; the --host-* flows
+        # Only the live-ISO flow needs an ISO at all; host flows
         # direct-boot a disk image with KERNEL/INITRD/APPEND.
         if: (inputs.flow || 'live') == 'live'
         run: |
-          SUM=$((curl -fsSL https://archlinux.org/iso/latest/sha256sums.txt 2>/dev/null || \
-                 curl -fsSL https://geo.mirror.pkgbuild.com/iso/latest/sha256sums.txt) |
+          SUM=$( (curl -fsSL https://archlinux.org/iso/latest/sha256sums.txt 2>/dev/null || \
+                  curl -fsSL https://geo.mirror.pkgbuild.com/iso/latest/sha256sums.txt) |
             awk '$2 == "archlinux-x86_64.iso" {print $1}')
           [ -n "$SUM" ] || { echo "could not resolve ISO checksum" >&2; exit 1; }
           echo "sum=$SUM" >> "$GITHUB_OUTPUT"
@@ -111,74 +114,48 @@ jobs:
           echo "${{ steps.iso.outputs.sum }}  $TMP" | sha256sum -c -
           mv "$TMP" "$ISO"
 
-      # The non-live flows need a prepared running-OS disk image. It is built
-      # here from the docker base image (no ISO download, no loop/nbd) and
-      # cached as one file, so only the first run of a given build pays for it.
-      # To invalidate, bump the `hostimg-vN-` prefix in both cache steps below —
-      # there is no version variable inside the builders.
-      #
-      # The path must list the kernel directory as well as the image and the
-      # .env: `<stem>.*` matches arch-host.img and arch-host.env but NOT
-      # arch-host/, which is where vmlinuz and initrd.img live. Caching only the
-      # former makes every later run die in run.sh's "references ... but it does
-      # not exist" check.
-      - name: Restore cached host image
+      # Cache the whole bundle, keyed by the versioned build recipes.
+      - name: Install host-image tools
+        if: startsWith(inputs.flow, 'host-')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fdisk e2fsprogs qemu-utils
+
+      - name: Restore host image
         id: host-cache
-        if: (inputs.flow || 'live') != 'live'
+        if: startsWith(inputs.flow, 'host-')
         uses: actions/cache/restore@v4
         with:
-          path: |
-            ${{ github.workspace }}/e2e-work/images/${{ inputs.flow == 'host-arch' && 'arch-host' || 'ubuntu-host' }}.*
-            ${{ github.workspace }}/e2e-work/images/${{ inputs.flow == 'host-arch' && 'arch-host' || 'ubuntu-host' }}/
-          key: hostimg-v2-${{ inputs.flow }}
+          path: ${{ env.HOST_BUNDLE }}
+          key: hostimg-${{ inputs.flow }}-${{ hashFiles('tools/mkhost.sh', 'tools/host/*.sh', 'tools/lib/*.sh', 'assets/questions-minimal.toml') }}
 
-      - name: Build host image (${{ inputs.flow }})
-        if: (inputs.flow || 'live') != 'live' && steps.host-cache.outputs.cache-hit != 'true'
-        run: ./tools/mkhost-${{ inputs.flow == 'host-arch' && 'arch' || 'ubuntu' }}.sh
+      - name: Build host image
+        if: startsWith(inputs.flow, 'host-') && steps.host-cache.outputs.cache-hit != 'true'
+        run: ./tools/mkhost.sh ${{ inputs.flow == 'host-arch' && 'arch' || 'ubuntu' }}
 
-      - name: Save host image to cache
-        if: (inputs.flow || 'live') != 'live' && steps.host-cache.outputs.cache-hit != 'true'
+      # Save before the test: the deliberately red Ubuntu flow still needs a cache.
+      - name: Save host image
+        if: startsWith(inputs.flow, 'host-') && steps.host-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
-          path: |
-            ${{ github.workspace }}/e2e-work/images/${{ inputs.flow == 'host-arch' && 'arch-host' || 'ubuntu-host' }}.*
-            ${{ github.workspace }}/e2e-work/images/${{ inputs.flow == 'host-arch' && 'arch-host' || 'ubuntu-host' }}/
-          key: hostimg-v2-${{ inputs.flow }}
+          path: ${{ env.HOST_BUNDLE }}
+          key: ${{ steps.host-cache.outputs.cache-primary-key }}
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
-          # The input is `workspaces`, not `workdir` (that is the actions-rs
-          # cargo spelling). The e2e suite at the workspace root has no
-          # Cargo.toml, so with the input ignored the action fell back to `.`
-          # and cached only $CARGO_HOME — every run rebuilt instantCLI from
-          # scratch. Root is resolved against GITHUB_WORKSPACE; the target dir
-          # defaults to <root>/target, which is where run.sh builds.
           workspaces: instantCLI
           prefix-key: e2e-release
           # Save even when the e2e run fails: a nightly installer suite goes
           # red regularly, and a failed run must not leave the next one cold.
           cache-on-failure: true
 
-      - name: Build ins for guest injection
-        run: cargo build --release --bin ins
-        working-directory: instantCLI
-
-      - name: Start HTTP server for guest asset injection
-        run: |
-          cp instantCLI/target/release/ins assets/ins
-          (cd assets && python3 -m http.server 8000 >/dev/null 2>&1 &)
-          sleep 1
-          curl -fsS -o /dev/null http://127.0.0.1:8000/ins
-
       - name: Run e2e suite
-        # Hosted runners have 4 vCPUs and no /dev/kvm: TCG only, hence the
-        # generous job timeout. QEMUCPUS=4 matches the runner. run.sh builds
-        # ins from INSTANTCLI_DIR (cached below).
+        # Allow the known product gap, while keeping preparation/check failures fatal.
+        continue-on-error: ${{ inputs.flow == 'host-ubuntu' }}
         run: |
-          FLOW_FLAG=""
-          [ "${{ inputs.flow || 'live' }}" = live ] || FLOW_FLAG="--${{ inputs.flow }}"
-          ./run.sh $FLOW_FLAG QEMUCPUS=4 --profile ${{ inputs.profile || 'minimal' }} \
+          ./run.sh --flow ${{ inputs.flow || 'live' }} QEMUCPUS=4 \
+            --profile ${{ inputs.profile || 'minimal' }} \
             ${{ inputs.smoke == true && '--smoke' || '' }}
 
       - name: Upload test results
@@ -190,13 +167,14 @@ jobs:
             casedir/testresults/
             casedir/ulogs/
             diag/verifydisk/testresults/
+            diag/verifydisk/ulogs/
           if-no-files-found: ignore
           retention-days: 14
 
   # Networkless install from the instantOS offline ISO — the acceptance
   # criterion of Phase 3 in instantOS/offlineiso.md: install, reboot, and no
   # file:// pacman reference may survive on the target. QEMU gets no NIC at
-  # all (run.sh --offline -> OFFLINE_SUT), so a bundle gap cannot be papered
+  # all (run.sh --flow offline -> OFFLINE_SUT), so a bundle gap cannot be papered
   # over by the network.
   offline-e2e:
     if: github.event_name == 'schedule' || inputs.flow == 'offline'
@@ -216,9 +194,12 @@ jobs:
       - name: Checkout e2e suite
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Check harness
+        run: ./tests/run.sh
+
       # instantCLI is deliberately NOT checked out here: the unit under test is
-      # the published ISO, installer included — /usr/local/bin/ins is injected
-      # at ISO build time — so `product_ref` does not apply to this job.
+      # the published ISO, including its packaged installer (or a build-time
+      # LOCAL_INS_BIN override), so `product_ref` does not apply to this job.
 
       - name: Free runner disk space
         # ~4.3 GiB ISO plus a 20 GiB install target do not fit next to the
@@ -247,15 +228,7 @@ jobs:
         id: offline-iso-cache
         uses: actions/cache@v4
         with:
-          # Keyed by the published sha256, same idea as the Arch ISO above: one
-          # download per published build instead of one per run, and a checksum
-          # check on every miss. The download is the slow part of this job
-          # (~4.3 GiB, minutes even on a fast link), so on the many nights
-          # where instantOS has not republished this is most of the runtime
-          # saved. Budget: the file is already-compressed data, so the entry
-          # stays ~4.3 GiB of the repository's 10 GiB cache limit; when
-          # instantOS publishes a new build the old entry is what gets evicted
-          # (GitHub also drops entries unused for 7 days).
+          # Compressed ISO: one cache entry per published checksum.
           path: ${{ env.E2E_MEDIA_DIR }}/instantos-offline-latest.iso
           key: offlineiso-v1-${{ steps.offline-iso.outputs.sum }}
 
@@ -275,11 +248,11 @@ jobs:
           ls -lh "$ISO"
 
       - name: Run e2e suite (offline, no NIC)
-        # run.sh --offline switches the suite to the shipped ins on the ISO,
-        # types the questions fixture in over serial (no port 8000, no cargo
-        # build) and sets E2E_OFFLINE/OFFLINE_SUT.
+        # run.sh --flow offline switches the suite to the shipped ins on the ISO,
+        # types the questions fixture in over serial (no asset server, no cargo
+        # build) and disables guest networking with OFFLINE_SUT.
         run: |
-          ./run.sh --offline QEMUCPUS=4 --profile ${{ inputs.profile || 'minimal' }} \
+          ./run.sh --flow offline QEMUCPUS=4 --profile ${{ inputs.profile || 'minimal' }} \
             ${{ inputs.smoke == true && '--smoke' || '' }}
 
       - name: Upload test results

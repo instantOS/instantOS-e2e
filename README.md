@@ -1,171 +1,161 @@
 # instantOS-e2e
 
-End-to-end VM tests for the instantOS installer (`ins arch`) and, later, the
-instantOS ISO. Built on [os-autoinst](https://github.com/os-autoinst/os-autoinst)
-(the engine behind openQA), executed standalone via the official
-`isotovideo` container — no openQA server, no KVM required.
+VM end-to-end tests for `ins arch`, using os-autoinst in the official
+isotovideo container. Tests build the current instantCLI working tree,
+including uncommitted changes. The offline flow tests the installer shipped
+on the ISO instead.
 
-The suite can start from two places:
+| Flow | Starting system | Contract |
+| --- | --- | --- |
+| `live` (default) | Arch ISO | Install onto `/dev/vda`, reboot and verify |
+| `offline` | instantOS offline ISO, no NIC | Install from the bundle, reboot, verify and reject surviving `file://` pacman references |
+| `host-arch` | Running Arch on `/dev/vda` | Install onto `/dev/vdb`, preserve the host, boot the target standalone and verify |
+| `host-ubuntu` | Running Ubuntu on `/dev/vda` | Refuse before writing `/dev/vdb`, preserve the host; no target boot |
 
-- **the live ISO** (default): boots the Arch ISO in QEMU, injects the `ins`
-  binary built from an instantCLI checkout over the network, runs the
-  installer's non-interactive path, cleanly reboots from disk and verifies the
-  installed system (systemd state, filesystem layout, bootloader, packages,
-  network);
-- **an already-running operating system** (`--host-arch` / `--host-ubuntu`):
-  boots a prepared minimal Arch or Ubuntu root **disk** (not an ISO), injects
-  the same `ins`, and installs instantOS onto a **second disk** while the host
-  OS keeps running. This is the "non-live install" path — the case the live
-  ISO cannot exercise at all. Afterwards the target disk is extracted and
-  booted on its own to verify it.
+The Ubuntu refusal contract is currently red on instantCLI `dev`: its
+host-profile gate exists in `ins arch install`, while this suite drives
+`ins arch exec`. CI reports that flow with `continue-on-error`. Keep its
+assertions intact; [FINDINGS](docs/FINDINGS.md#non-live-install-characterisation)
+records the product baseline and the latest Arch chroot-guard failure.
 
-See [`docs/FINDINGS.md`](docs/FINDINGS.md) for the full research log, gotchas,
-design notes and the non-live characterisation results.
+## Run locally
 
-> **⚠️ [`warning.md`](warning.md) — read before running any root + mount
-> script.** On 2026-09-26 a prototype in the scratch area wiped this host's
-> `/dev` and `/run` by `mount --rbind`-ing them into a scratch directory and
-> later `rm -rf`-ing that directory; `rm -rf` descends through mount points.
-> The machine needed a reboot. The script is now hardened and covered by
-> `tools/test-mount-guards.sh`, but the pattern is worth understanding before
-> you write another one.
+Requirements: Docker, Bash 4.3+, Python 3.11+, `flock`, and an instantCLI checkout
+(default `../instantCLI`). Disk conversion also needs `qemu-img`. Host image
+building needs `sfdisk`, `mkfs.ext4`, `e2fsck`, and passwordless sudo for exporting
+root-owned files. TCG works without KVM; `--kvm` enables hardware acceleration.
 
-## Quickstart (local)
-
-Requirements: docker, qemu-capable host (TCG works; KVM makes it ~10x
-faster), an Arch ISO, and an instantCLI checkout.
+Put the Arch ISO at `~/e2e-media/archlinux-x86_64.iso`. Put a published offline
+ISO at `~/e2e-media/instantos-offline-latest.iso`, or select a local build
+explicitly with `E2E_MEDIA_DIR` and `E2E_ISO_NAME`.
 
 ```sh
-# layout assumed by default (override with env vars, see run.sh):
-#   ../instantCLI                        product checkout
-#   ~/e2e-media/archlinux-x86_64.iso     install medium
-#   ../e2e-work/images/                  prepared host images (host flows)
+./run.sh --smoke                         # boot + full in-VM dry-run (~4 min TCG)
+./run.sh                                 # install + reboot + verify (~35 min TCG)
+./run.sh --profile full                  # instantOS packages and boot themes
+./run.sh --profile encrypted             # full profile with LUKS
+./run.sh --release                       # published installer via install.sh
+./run.sh --flow offline                  # shipped installer, no NIC (~40 min TCG)
 
-./run.sh                 # full pipeline: install + reboot + verify (~35 min TCG)
-./run.sh --smoke         # boot ISO + in-VM dry-run only (~4 min)
-./run.sh --release       # test published release via install.sh (no source build, no web server)
-./run.sh --offline       # Phase 3: no-NIC install from the offline ISO's bundle
-                         # (boots instantos-*-offline.iso, ships no questions over
-                         # the network, asserts no file:// pacman remnants survive;
-                         # ~40 min TCG). Looks in E2E_MEDIA_DIR for either a local
-                         # build or a copy of the published ISO
-                         # (instantos-offline-latest.iso, ~4.3 GiB, stable path:
-                         # https://sourceforge.net/projects/instantos/files/offline/latest/instantos-offline-latest.iso/download).
-                         # For checkout-fresh installer code, rebuild the ISO
-                         # locally with LOCAL_INS_BIN=... (instantOS/iso/build.sh)
-                         # — the published one always carries the released `ins`.
+# Select a local offline build; no automatic filename guessing.
+E2E_MEDIA_DIR=../instantOS/iso/build/iso \
+E2E_ISO_NAME=instantos-YYYY.MM.DD-offline.iso ./run.sh --flow offline
+
+# Running-OS flows require no ISO.
+./tools/mkhost.sh arch
+./run.sh --flow host-arch --smoke         # dry-run only (~8 min TCG)
+./run.sh --flow host-arch                 # install + standalone verify (~50 min TCG)
+./tools/mkhost.sh ubuntu
+./run.sh --flow host-ubuntu               # require safe refusal
+
+./run.sh --kvm QEMUCPUS=4 QEMURAM=4096
+./run.sh --help
 ```
 
-## Install from a running OS (second disk)
+`minimal` is TTY-only, ext4, no encryption. `full` adds instantOS packages,
+Plymouth and GRUB themes. `encrypted` adds LUKS with `/boot` inside the
+container and verifies both GRUB and initramfs unlocking. Theme assertions
+inspect the initramfs using `lsinitcpio`. Host flows require `minimal`; the
+runner derives their configuration from that fixture with `Disk = "/dev/vdb"`.
+
+| Environment | Default | Purpose |
+| --- | --- | --- |
+| `INSTANTCLI_DIR` | `../instantCLI` | Product checkout |
+| `CARGO_TARGET_DIR` | `$INSTANTCLI_DIR/target` | Incremental build output |
+| `E2E_MEDIA_DIR` | `~/e2e-media` | ISO directory for both ISO flows |
+| `E2E_ISO_NAME` | `archlinux-x86_64.iso` / `instantos-offline-latest.iso` | Exact filename |
+| `E2E_WORK_DIR` | `../e2e-work` | Host bundles and converted target disks |
+| `E2E_IMAGE_DIR` | `$E2E_WORK_DIR/images` | Optional bundle-directory override |
+
+Cargo compiler temporary files use `$E2E_WORK_DIR/tmp` unless `TMPDIR` is set,
+so builds do not rely on free space in `/tmp`.
+
+Login credentials are read from the selected questions fixture. Host bundles
+use the minimal fixture credential; rebuild them after changing that fixture.
+Hardware tuning can use `VAR=VALUE` arguments;
+scenario, boot-device, networking and credential variables are controlled by
+the runner and cannot be overridden independently.
+
+## Harness design
+
+The runner holds a checkout lock for the entire run. Each stage clears its
+runtime state, launches the same container and returns artifact ownership,
+including on test failure. The harness container digest is pinned in
+`tools/lib/isotovideo.sh`; update it together with a validated backend change.
+A full host-Arch run always converts and verifies
+the target; conversion or verification failure makes the run fail.
+
+Checkout flows build `ins` once and serve it from this checkout on an available
+port. The server belongs to that run and stops on exit. Questions files go
+in over serial in every flow, including offline and release. No persistent
+asset server or fixed host port is required.
+
+Host bundles contain `disk.img`, `vmlinuz`, and `initrd.img` under
+`images/arch-host/` or `images/ubuntu-host/`. `tools/mkhost.sh` builds rootfs
+recipes inside Docker, exports them and assembles a GPT/ext4 disk using
+`mkfs.ext4 -d`; it creates no host mounts or loop devices. It checks the
+filesystem and partition geometry before replacing a previous bundle.
+
+Distro recipes live in `tools/host/`. Arch includes the installation toolchain
+(`arch-install-scripts`, fzf, gum, filesystem tools). Ubuntu includes only
+host/harness essentials and the installer’s SQLite runtime, with no pacman
+or Arch installation toolchain. Both
+configure DHCP via systemd-networkd, resolved, and gettys on `hvc0` and `ttyS0`.
+The kernel command line is a single `root=LABEL=...` token because os-autoinst
+mishandles whitespace in `APPEND`. NIC matching uses `Type=ether`.
+
+Guest helpers in `installer_base.pm` share config injection, dry-run/install
+execution, log uploads, offline preconditions and host snapshots. Host snapshots
+are collected before assertions, and both dry-run and real installation must
+preserve protected host configuration. Installed-system checks, including
+profile-specific checks, are shared with the diagnostic disk harness.
+
+## Results and iteration
+
+Run long tests detached and poll their logs:
 
 ```sh
-./tools/mkhost-arch.sh       # once: build images/arch-host.img   (~6 min)
-./run.sh --host-arch         # install from a running Arch onto /dev/vdb (~50 min TCG)
-
-./tools/mkhost-ubuntu.sh     # once: build images/ubuntu-host.img (~8 min)
-./run.sh --host-ubuntu       # from a running Ubuntu; expects a refusal, not an install
+./run.sh --flow host-arch > /tmp/e2e.log 2>&1 &
+tail -f /tmp/e2e.log
 ```
 
-> **`--host-ubuntu` is expected to fail** against instantCLI `dev`. It asserts
-> that `ins` refuses a foreign distro *before* repartitioning the disk it was
-> pointed at; the host-profile gate exists in `ins arch install` but not in the
-> `ins arch exec` this flow drives, so the disk does get partitioned and the
-> run only fails afterwards. Those asserts are the regression test for that
-> gap — see [docs/FINDINGS.md](docs/FINDINGS.md) §"Non-live install
-> characterisation". CI runs this flow with `continue-on-error`.
+Exit 0 means every required stage passed. Start failure diagnosis with
+`casedir/virtio_console.log`, which includes the failing command and its output.
+Screenshots and per-module results live in `casedir/testresults/`; uploaded
+installer logs and host snapshots live in `casedir/ulogs/`. Offline logs are
+collected over serial with a SHA-256 check; online logs use the backend upload
+API. Attachments use their source basenames (`dryrun.log`, `install.log`) and
+`executor-install.log`. The standalone
+verification stage writes equivalent artifacts under `diag/verifydisk/`.
+Never pipe a running Docker client through `head`: SIGPIPE can orphan the VM.
 
-These flows install `assets/questions-seconddisk.toml` (minimal, unencrypted),
-so `run.sh` rejects `--profile` other than `minimal` on them rather than
-silently ignoring the flag.
+Use smoke tests for configuration/CLI/dry-run changes. Use a full run for
+installation, reboot, or verification changes. Pure product logic belongs in
+instantCLI's faster `cargo test` suite.
 
-The host images are minimal x86_64 root **disks** built from docker base
-images (`archlinux:latest`, `ubuntu:24.04`) with `mkfs.ext4 -d` — no ISO
-download, no loop/nbd device, no cloud-init, ~1–3 GiB each. `run.sh`
-direct-boots them (`KERNEL=`/`INITRD=`/`APPEND=`, root by `LABEL=`), so there
-is no bootloader in them at all. Each image is a GPT disk with a single ext4
-partition, DHCP on the slirp NIC, and getty **serial consoles on both `ttyS0`
-and the virtio console `hvc0`** — the harness drives the whole flow over
-`hvc0` with text matching, so the install stage needs no new needles (the
-second stage reuses the `installed-*` ones it shares with the main suite).
+[Diagnostic commands](diag/README.md) can boot an existing installed disk
+without reinstalling, capture boot screens, or inspect an instantOS live ISO.
+[AGENTS.md](AGENTS.md) records agent-specific rules; [FINDINGS](docs/FINDINGS.md)
+and [isotests.md](isotests.md) preserve research history. Read
+[warning.md](warning.md) before developing root scripts that mount host paths.
 
-The kernel cmdline `APPEND` is deliberately a single whitespace-free token
-(`root=LABEL=…`): os-autoinst single-quotes an `-append` value containing
-whitespace and the kernel then reads the quotes as part of its first argument,
-so `root=` would not be recognised. Hence no `console=` and no `net.ifnames=0`
-— the images set up `serial-getty@hvc0` themselves and match the NIC by
-`Driver=virtio_net`.
+## Checks and CI
 
-Both builders record exactly what they bake into the header of the script;
-that list is part of the test's meaning (the Ubuntu image is deliberately
-*pristine*: no `arch-install-scripts`, no `pacman`, no `archlinux-keyring`, so
-the product's own bootstrap of the Arch toolchain is what is under test).
-
-CI runs the same thing — see `.github/workflows/e2e.yml`. Every nightly runs two
-jobs in parallel on separate runners: `install-e2e` (the online install, from the
-Arch ISO) and `offline-e2e` (a networkless install from the **published**
-instantOS offline ISO, downloaded from its stable SourceForge path and cached by
-sha256). `workflow_dispatch` runs a single flow instead: `product_ref` selects
-the instantCLI ref under test, `flow` selects `live` / `offline` / `host-arch` /
-`host-ubuntu`, `smoke` cuts the run down to boot + in-VM dry-run. The offline
-job deliberately does not check out instantCLI — it tests the shipped artifact
-(installer included), so `product_ref` does not apply to it. `host-ubuntu` runs
-with `continue-on-error`, because of the known product gap above.
-
-## How it works
-
-- `casedir/` is an os-autoinst **test distribution**: Perl test modules
-  (`tests/`), image fixtures (`needles/`), and the questions fixture
-  (`assets/` in the repo root, served to the guest over HTTP).
-- Strategy: needles only for boot menus and login prompts; everything else
-  is text matching on a virtio serial console (`assert_script_run`),
-  which is robust against font/rendering drift.
-- The installer copies its own binary into the target system, so a single
-  self-contained `ins` binary plus a questions file is all the VM needs.
-- The two flows use different questions fixtures: `assets/questions-minimal.toml`
-  (`Disk = "/dev/vda"`) for the live ISO, `assets/questions-seconddisk.toml`
-  (`Disk = "/dev/vdb"`) for the running-OS flows.
-- A second-disk install cannot be verified by rebooting (the machine comes
-  back up in the host OS on `/dev/vda`), so `run.sh` flattens
-  `casedir/raid/hd1` and boots it standalone through the `diag/verifydisk`
-  harness, which runs exactly the same `login_installed_system()` +
-  `assert_core_suite()` as the main suite. There the target is `/dev/vda`,
-  hence `E2E_TARGET_DISK=/dev/vda` for that stage. `--host-ubuntu` skips the
-  stage: nothing is supposed to have been installed.
-- `diag/` contains one-off harnesses used while debugging (boot a bare disk
-  image, capture boot frames); they are not part of the regular suite.
-
-## Repo layout
-
-```
-run.sh                  entry point (wraps isotovideo in the official container)
-casedir/                os-autoinst test distribution
-  tests/                boot / install / verify / host_boot / host_install modules
-  needles/              PNG + JSON image fixtures
-assets/                 served to the guest (ins binary, questions files)
-diag/                   diagnostic harnesses
-tools/                  helper scripts (needle creation, install-log
-                        timing analysis, host image builders,
-                        mount-guard regression test)
-docs/FINDINGS.md        research log: findings, bugs caught, gotchas
-warning.md              mount/rm -rf hazard: what broke, and the safe pattern
+```sh
+./tests/run.sh
 ```
 
-## Notes
+This checks Bash/Perl syntax, runner orchestration with simulated external
+commands, and guest-helper contracts with a fake VM API. Perl runs in the same
+pinned harness container as the VM tests.
 
-- Both CI jobs cache their ISO keyed by its published sha256
-  (`actions/cache`): one download per release instead of per run, and a
-  checksum check on every cache miss. The `--host-*` flows need no ISO at all;
-  their host image is built in the job and cached the same way.
-- The offline ISO is ~4.3 GiB, so its cache entry is worth more than it costs —
-  the SourceForge download is the slowest step of that job — but it does take
-  most of the repository's 10 GiB cache budget. A new published build evicts the
-  previous entry. If the download ever gets fast enough to make the cache
-  pointless, the step to delete is `Cache instantOS offline ISO`.
-- The `ins` binary under `assets/` is generated; never commit it. The host
-  disk images are large generated binaries too — never commit them; the
-  `tools/mkhost-*.sh` builders are the source of truth.
-- Needle PNGs *are* committed — they are the test fixtures. Keep crops
-  tight to stable text (avoid kernel versions/timestamps) so they survive
-  ISO updates; `tools/make_needle.py <frame.png> <tag> x y w h` creates them.
-- `PASSWORD` in `run.sh` is a throwaway VM credential defined by the
-  questions fixture; nothing here is secret.
+CI runs online and published-offline installs nightly; manual dispatch selects
+one flow. `product_ref` applies to checkout flows only. ISO caches use published
+checksums; host-bundle caches use hashes of the builder and recipes. CI delegates
+build, asset serving and VM lifecycle to `run.sh`.
+
+The runner now uses `--flow NAME` in place of `--offline` / `--host-arch` /
+`--host-ubuntu`. Rebuild old host images with `tools/mkhost.sh`; standalone
+`.img` and generated `.env` files are no longer inputs. Diagnostic commands now
+use `tools/run-diagnostic.sh`. The external scratch-prototype guard test was
+removed because its implementation is outside this repository.

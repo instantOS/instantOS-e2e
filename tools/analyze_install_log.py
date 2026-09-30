@@ -83,7 +83,7 @@ def main(paths):
 
     if all_tl:
         print("\n== executor-log command timeline ==")
-        t0 = all_tl[0][0]
+        t0 = min(ts for ts, _, _ in all_tl)
         for ts, cmd, dur in sorted(all_tl, key=lambda x: x[0]):
             off = (ts - t0).total_seconds()
             print(f"  +{int(off // 60):02d}:{int(off % 60):02d} {fmt_dur(dur):>9}  {cmd[:110]}")

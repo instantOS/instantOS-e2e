@@ -1,3 +1,8 @@
+> **Current operations:** use [README.md](../README.md) for commands and layout.
+> This file preserves the investigation history. The runner now selects flows
+> with `--flow`, builds directory bundles with `tools/mkhost.sh`, owns its asset
+> server, and shares a launcher across installation and diagnostics.
+
 > **Post-split note (2026-09-20):** this log was written while the suite
 > lived in `instantCLI/e2e/`. Paths below have been mechanically updated
 > to the new layout; `e2e.md`/`e2e/` in older text refers to the same
@@ -448,7 +453,7 @@ does this).
 
 ## Non-live install characterisation
 
-The `--host-arch` / `--host-ubuntu` flows (`./run.sh --host-arch`) install
+The `host-arch` / `host-ubuntu` flows (`./run.sh --flow host-arch`) exercise installing
 instantOS onto a second disk while a real OS keeps running. The live ISO cannot
 exercise that path at all: there the running system *is* a RAM-backed archiso
 root, so the disk guard, the host-side state writes and the foreign-distro
@@ -459,7 +464,7 @@ on purpose** — that distinction is easy to get backwards.
 
 Reference: instantCLI `dev` (`cb171a7e`) unless stated otherwise.
 
-### What the host must survive (`--host-arch`, green)
+### What the host must survive (`host-arch`, green)
 
 `tests/host_install.pm` digests the host's own package-manager configuration
 before the run and diffs it after. An install from a running system must not
@@ -483,7 +488,7 @@ installer's chroot hand-off binary must be **gone** from the target —
 `execution/mod.rs` deletes `/usr/bin/ins-install` at the end of a full install,
 so a target that still has it did not run to completion.
 
-### What is red on purpose (`--host-ubuntu`)
+### What is red on purpose (`host-ubuntu`)
 
 `assert_ubuntu_refused` asserts the property a foreign distro needs: `ins` must
 bail out **before** it repartitions the disk it was pointed at. The product
@@ -508,15 +513,14 @@ The one assert in that block that *does* pass today is the foreign-distro
 warning: it comes from the shared command dispatcher (`cli/commands/mod.rs`),
 which `exec` does go through.
 
-### Second-stage verification, and why the disk is booted twice
+### Standalone target verification
 
-After `power('reset')` the machine comes back up in the *host* OS: the target
-is on a disk the firmware was never told about (the host images contain no
-bootloader at all, they are direct-kernel-booted). So the install is proven out
-of band — `run.sh` flattens `casedir/raid/hd1` and boots it alone through
-`diag/verifydisk`, which runs the same `login_installed_system()` +
-`assert_core_suite()` as the main suite. There the target is `/dev/vda`, which
-is why that stage passes `E2E_TARGET_DISK=/dev/vda` explicitly.
+The source host direct-boots a kernel and has no bootloader. The target cannot
+be verified by resetting that VM. After collecting evidence, the harness
+shuts the source host down; `run.sh` flattens `casedir/raid/hd1` and boots it
+alone through `diag/verifydisk`. That harness runs the same complete
+installed-system verification as the main suite. The target becomes
+`/dev/vda` in the standalone VM, so the second stage sets that explicitly.
 
 `host-ubuntu` is excluded from that stage: its contract is that nothing is
 installed, so there is no install to boot.
@@ -529,17 +533,111 @@ installed, so there is no install to boot.
   argument, and `root=` is not recognised — the guest lands in an initramfs
   shell with no console. Consequences: no `console=`, no `net.ifnames=0`. Both
   host images enable `serial-getty@hvc0` explicitly and match the NIC by
-  `Driver=virtio_net` in `10-e2e.network` rather than by the name `eth0`.
+  `Type=ether` in `10-e2e.network` rather than by the name `eth0`.
 - `HDD_N` backing files are opened `O_RDWR`, so the images must be bind-mounted
   read-write. `/media` is read-only, hence the separate `/e2e` mount.
 - Image geometry: GPT reserves the last 33 sectors for its backup header and
   partition array. A partition sized to end on the very last sector leaves no
   room and `sfdisk` fails with `Invalid argument` — after `truncate` has
   already produced a file, so the build dies leaving an image with no partition
-  table at all. `tools/mkhost-*.sh` reserve `GPT_RESERVE_MB=1` and assert the
-  partition end against the last usable sector.
-- `lsblk -s` walks a device's **parents**; that is what lets one root-device
-  assert work for a plain root, an LUKS mapper and an LVM volume alike. Match
-  with `grep -q '<dev>$'` rather than `grep -x` on the bare name: without `-r`,
-  `lsblk` prefixes parent lines with box-drawing characters, and `-r` is the
-  flag most likely to change under us.
+  table at all. `tools/mkhost.sh` reserves a MiB at each end, checks the filesystem with
+  e2fsck, and reads back the partition geometry before publishing the bundle.
+- `lsblk -s` walks a device's parents. Raw absolute names (`-nrpo NAME`)
+  allow an exact disk comparison for plain, LUKS and LVM roots alike.
+
+## Refactor validation — 2026-09-30
+
+A full `./run.sh --flow host-arch` against instantCLI `cb171a7e` passed
+host boot, config injection, dry-run, blank-target checks and host-protection
+checks before and after installation. The install completed Disk, Base
+(including pacstrap) and Fstab, then failed at the target's chroot Config step:
+
+```text
+Refusing to execute an invalid configuration
+stored answer for Disk is invalid: Cannot install onto /dev/vdb: that is the disk this system booted from.
+INSTALL_RC=1
+```
+
+`execute_installation` validates the entire imported config before considering
+the selected step. `DiskQuestion::validate` checks the running root/boot disk,
+which is now the intended target inside the chroot. The original safety guard
+is correct in the source host; applying it unchanged during target configuration
+rejects the installer's own hand-off. This is a product failure, rather than a
+reason to relax the host assertions. The earlier successful non-live baseline
+above remains historical evidence, not a claim that this checkout passes today.
+The standalone verification stage correctly did not run after the failed install.
+
+The run uploaded both installer logs and pre/dry-run/post host snapshots before
+asserting success. Local evidence is retained under
+`../e2e-work/review-results/host-arch/`. Both consolidated host-image recipes
+also built successfully and passed filesystem and partition-geometry checks.
+
+The first local offline run stopped because the harness required
+`/usr/local/bin/ins`. Inspection of `instantOS/iso/build.sh` and its publication
+workflow showed that this was the wrong contract: published images ship the
+packaged `/usr/bin/ins`; `LOCAL_INS_BIN` optionally shadows it in `/usr/local/bin`.
+The offline flow now resolves `ins` through the ISO's PATH and records the binary
+path and version. It still uses no checkout build, HTTP asset server or guest NIC.
+
+The Ubuntu host fixture also needed corrections: its driver-specific network
+match left the NIC unmanaged on systemd 255, while `Type=ether` brought it up
+and obtained DHCP. Both dedicated host recipes now configure Ethernet without
+depending on interface names or a specific driver. Boot waits for networkd
+readiness before checking gateway/DNS access. Ubuntu includes the checkout
+binary's SQLite runtime; without it the loader failed before the installer
+could exercise its foreign-host contract. Its VM kernel now comes from
+`linux-image-virtual`, avoiding the headers, extra modules and hardware firmware
+pulled by `linux-generic`. Its rootfs shrank from about 1.3 GiB to 360 MiB.
+
+Offline evidence collection now transfers logs over serial and validates their
+SHA-256 before saving them under `ulogs/`; os-autoinst skips its HTTP upload API
+when `OFFLINE_SUT` is set. Dry-run assertions inspect the planned user creation,
+pacstrap and GRUB commands rather than version-specific status prose. Install
+completion checks inspect the target's pacman, fstab and GRUB configuration;
+all installed-system assertions remain required after reboot. Preparation and
+installation stages are fatal on failure, so dependent modules do not continue
+with missing inputs.
+
+### Published offline ISO: installation fails
+
+The SourceForge `latest` artifact, build `build-5-1`, was downloaded and its
+published SHA-256 verified before the networkless full run:
+
+```text
+bytes: 4578476032
+sha256: 1933b1f5f9bc8c5a92648af1fcbf6bca329cce97408abee9f9933c3282bcfe85
+installer: /usr/bin/ins, version 0.14.14
+```
+
+Boot, offline-bundle preconditions and the complete dry-run passed. The actual
+installation partitioned and formatted `/dev/vda`, then failed in Base while
+fetching `https://archlinux.org/mirrorlist/`. With no guest NIC, DNS correctly
+failed; `INSTALL_RC=1`. No installed system was available to reboot or verify.
+The serial evidence collector preserved both installer and executor logs.
+Local evidence is in `../e2e-work/review-results/offline-published/`.
+
+This image's packaged installer predates offline support: instantCLI commit
+`cf61f048` (`feat: offline installer`) already reports version `0.14.20`.
+The instantOS publisher builds the image with its repository packages and does
+not set `LOCAL_INS_BIN`. The ISO's bundle and file-first mirrorlist alone cannot
+make `0.14.14` offline-aware. A corrected published image needs an installer
+with offline support and a successful full networkless acceptance run. Merely
+injecting this checkout into the existing test would change the artifact under
+test and would not validate the published image.
+
+### Ubuntu refusal: fixture correction exposes the intended failure
+
+The minimal Ubuntu fixture initially omitted timezone data, so imported
+`Europe/Berlin` failed config validation before execution. That produced an
+incidental refusal which could falsely satisfy the foreign-host contract.
+The fixture now includes `tzdata` and `locales`; its dry-run must not report
+an invalid configuration, and the refusal test requires an explicit nonzero
+installer exit status.
+
+The final full Ubuntu run passed boot, dry-run and host-preservation checks,
+then partitioned `/dev/vdb`, enabled its swap and mounted its ext4 partition
+at `/mnt`. Base failed because `/etc/pacman.conf` does not exist on Ubuntu.
+The blank-target assertion correctly failed. This reproduces the documented
+missing foreign-host gate with a valid fixture, rather than accidentally
+passing on a configuration error. Evidence is retained in
+`../e2e-work/review-results/host-ubuntu-final/`.
