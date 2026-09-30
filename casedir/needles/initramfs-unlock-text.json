@@ -1,0 +1,14 @@
+{
+    "area": [
+        {
+            "xpos": 295,
+            "ypos": 383,
+            "width": 342,
+            "height": 17,
+            "type": "match"
+        }
+    ],
+    "tags": [
+        "initramfs-unlock"
+    ]
+}
