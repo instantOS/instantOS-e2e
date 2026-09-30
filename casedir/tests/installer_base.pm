@@ -193,10 +193,14 @@ sub shutdown_guest {
     assert_script_run('umount -R /mnt', 300);
     assert_script_run('sync', 120);
     power('acpi');
-    check_shutdown(600);
+    check_shutdown(600) or die "Guest did not shut down; refusing to eject or reset\n";
     # The live root still reads the ISO while shutting down. Eject only after
     # QEMU confirms power-off, or systemd loses its binaries and cannot finish.
     eject_cd if $eject;
-    power('reset') if $reset;
+    if ($reset) {
+        power('reset');
+        # QEMU -no-shutdown stops its CPUs; reset alone does not resume them.
+        resume_vm;
+    }
 }
 1;

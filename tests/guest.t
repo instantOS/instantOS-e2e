@@ -10,7 +10,7 @@ BEGIN {
     use Exporter 'import';
     our @EXPORT = qw(get_var get_required_var assert_script_run script_run script_output upload_logs
         record_info select_console wait_serial type_string type_password send_key
-        power check_shutdown eject_cd assert_screen sleep);
+        power check_shutdown eject_cd resume_vm assert_screen sleep);
     our (%vars, @commands, @uploads, $fail_assert, $fail_screen, $output_override);
     sub get_var { exists $vars{$_[0]} ? $vars{$_[0]} : $_[1] }
     sub get_required_var { die "Missing $_[0]" unless exists $vars{$_[0]}; $vars{$_[0]} }
@@ -34,7 +34,9 @@ BEGIN {
     sub type_password { push @commands, "password:" . ($_[0] // 'default') }
     sub send_key { push @commands, "key:$_[0]" }
     sub power { push @commands, "power:$_[0]" }
-    sub check_shutdown { push @commands, "shutdown-complete" }
+    our $shutdown_ok = 1;
+    sub check_shutdown { push @commands, "shutdown-complete"; $shutdown_ok }
+    sub resume_vm { push @commands, 'resume' }
     sub eject_cd { push @commands, "eject" }
     sub assert_screen {
         push @commands, "screen:$_[0]:$_[1]";
@@ -144,9 +146,14 @@ for my $flow ('live', 'offline') {
 {
     @testapi::commands = ();
     installer_base::shutdown_guest(1, 1);
-    my @lifecycle = grep { /^(?:power:|shutdown-complete|eject)/ } @testapi::commands;
-    is_deeply(\@lifecycle, ['power:acpi', 'shutdown-complete', 'eject', 'power:reset'],
+    my @lifecycle = grep { /^(?:power:|shutdown-complete|eject|resume)/ } @testapi::commands;
+    is_deeply(\@lifecycle, ['power:acpi', 'shutdown-complete', 'eject', 'power:reset', 'resume'],
         'live root keeps its ISO until shutdown completes, then boots the target');
+    local $testapi::shutdown_ok = 0;
+    @testapi::commands = ();
+    ok(!eval { installer_base::shutdown_guest(1, 1); 1 }, 'shutdown timeout fails the stage');
+    ok(!grep(/^(?:eject|power:reset|resume)$/, @testapi::commands),
+        'shutdown timeout preserves the ISO and does not reboot');
 }
 
 {
