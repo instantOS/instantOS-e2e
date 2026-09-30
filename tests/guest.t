@@ -34,8 +34,8 @@ BEGIN {
     sub type_password {}
     sub send_key {}
     sub power { push @commands, "power:$_[0]" }
-    sub check_shutdown {}
-    sub eject_cd {}
+    sub check_shutdown { push @commands, "shutdown-complete" }
+    sub eject_cd { push @commands, "eject" }
     sub assert_screen {}
     sub sleep {}
     $INC{'testapi.pm'} = 1;
@@ -136,6 +136,14 @@ for my $flow ('live', 'offline') {
         close $saved;
     }
     chdir $previous or die $!;
+}
+
+{
+    @testapi::commands = ();
+    installer_base::shutdown_guest(1, 1);
+    my @lifecycle = grep { /^(?:power:|shutdown-complete|eject)/ } @testapi::commands;
+    is_deeply(\@lifecycle, ['power:acpi', 'shutdown-complete', 'eject', 'power:reset'],
+        'live root keeps its ISO until shutdown completes, then boots the target');
 }
 
 done_testing();

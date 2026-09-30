@@ -192,9 +192,11 @@ sub shutdown_guest {
     assert_script_run('swapoff -a', 120);
     assert_script_run('umount -R /mnt', 300);
     assert_script_run('sync', 120);
-    eject_cd if $eject;
     power('acpi');
     check_shutdown(600);
+    # The live root still reads the ISO while shutting down. Eject only after
+    # QEMU confirms power-off, or systemd loses its binaries and cannot finish.
+    eject_cd if $eject;
     power('reset') if $reset;
 }
 1;
