@@ -14,7 +14,8 @@ on the ISO instead.
 
 The Ubuntu refusal contract is currently red on instantCLI `dev`: its
 host-profile gate exists in `ins arch install`, while this suite drives
-`ins arch exec`. CI reports that flow with `continue-on-error`. Keep its
+`ins arch exec`. CI tolerates only the documented partition-before-refusal failure, using completed
+VM results and preservation evidence. Other failures remain fatal. Keep its
 assertions intact; [FINDINGS](docs/FINDINGS.md#non-live-install-characterisation)
 records the product baseline and the latest Arch chroot-guard failure.
 

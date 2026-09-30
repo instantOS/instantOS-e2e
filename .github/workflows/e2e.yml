@@ -151,12 +151,17 @@ jobs:
           cache-on-failure: true
 
       - name: Run e2e suite
-        # Allow the known product gap, while keeping preparation/check failures fatal.
-        continue-on-error: ${{ inputs.flow == 'host-ubuntu' }}
         run: |
+          rc=0
           ./run.sh --flow ${{ inputs.flow || 'live' }} QEMUCPUS=4 \
             --profile ${{ inputs.profile || 'minimal' }} \
-            ${{ inputs.smoke == true && '--smoke' || '' }}
+            ${{ inputs.smoke == true && '--smoke' || '' }} || rc=$?
+          if [ "$rc" -ne 0 ] && python3 tools/classify_ubuntu_failure.py casedir "$rc"; then
+            echo '::warning::Known Ubuntu refusal gap: installer partitioned the target before refusing'
+            echo 'Known Ubuntu refusal gap; VM assertions remain failed. See e2e-results.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            exit "$rc"
+          fi
 
       - name: Upload test results
         if: always()
