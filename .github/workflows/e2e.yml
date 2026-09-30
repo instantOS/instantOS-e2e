@@ -166,8 +166,18 @@ jobs:
           path: |
             casedir/testresults/
             casedir/ulogs/
+            casedir/virtio_console.log
+            casedir/virtio_console_user.log
+            casedir/serial0
+            casedir/vars.json
+            casedir/autoinst-status.json
             diag/verifydisk/testresults/
             diag/verifydisk/ulogs/
+            diag/verifydisk/virtio_console.log
+            diag/verifydisk/virtio_console_user.log
+            diag/verifydisk/serial0
+            diag/verifydisk/vars.json
+            diag/verifydisk/autoinst-status.json
           if-no-files-found: ignore
           retention-days: 14
 
@@ -265,5 +275,10 @@ jobs:
           path: |
             casedir/testresults/
             casedir/ulogs/
+            casedir/virtio_console.log
+            casedir/virtio_console_user.log
+            casedir/serial0
+            casedir/vars.json
+            casedir/autoinst-status.json
           if-no-files-found: ignore
           retention-days: 14
