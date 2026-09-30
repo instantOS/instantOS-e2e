@@ -58,6 +58,10 @@ class RunnerTests(unittest.TestCase):
         self.repo.mkdir()
         shutil.copy(ROOT / 'run.sh', self.repo)
         shutil.copytree(ROOT / 'tools', self.repo / 'tools')
+        # Control only the capability probe; execute the real acceleration
+        # selection and both entry points for available/unavailable hosts.
+        with (self.repo / 'tools/lib/acceleration.sh').open('a') as f:
+            f.write('\nkvm_available() { [ "${TEST_KVM_AVAILABLE:-0}" = 1 ]; }\n')
         for directory in ('assets', 'casedir', 'diag/verifydisk', 'diag/liveiso', 'diag/bootcap'):
             (self.repo / directory).mkdir(parents=True)
         for fixture in ROOT.glob('assets/questions-*.toml'):
@@ -294,6 +298,40 @@ class RunnerTests(unittest.TestCase):
         self.assertIn('UEFI=1', self.calls('docker')[-1])
         result = self.run_diagnostic('liveiso', 'PASSWORD=custom')
         self.assertEqual(result.returncode, 2, result.stderr)
+
+    def test_acceleration_selection_in_both_runners(self):
+        disk = self.base / 'installed.raw'
+        disk.write_bytes(b'disk')
+        for available, flags, expected_kvm in (
+            ('0', (), False), ('1', (), True), ('1', ('--tcg',), False),
+            ('1', ('--kvm',), True), ('0', ('--tcg',), False),
+        ):
+            with self.subTest(available=available, flags=flags):
+                results = (
+                    self.run_suite('--flow', 'offline', *flags, TEST_KVM_AVAILABLE=available),
+                    self.run_diagnostic('verifydisk', disk, *flags, TEST_KVM_AVAILABLE=available),
+                )
+                for result, args in zip(results, self.calls('docker')[-2:]):
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual('/dev/kvm' in args, expected_kvm)
+                    self.assertEqual('qemu_no_kvm=1' in args, not expected_kvm)
+
+    def test_explicit_kvm_fails_before_launch_when_unavailable(self):
+        disk = self.base / 'installed.raw'
+        disk.write_bytes(b'disk')
+        for result in (self.run_suite('--flow', 'offline', '--kvm'),
+                       self.run_diagnostic('verifydisk', disk, '--kvm')):
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertIn('KVM requested', result.stderr)
+        self.assertFalse(self.calls('docker'))
+
+    def test_host_verification_preserves_selected_acceleration(self):
+        result = self.run_suite('--flow', 'host-arch', TEST_KVM_AVAILABLE='1')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self.calls('docker')), 2)
+        for args in self.calls('docker'):
+            self.assertIn('/dev/kvm', args)
+            self.assertNotIn('qemu_no_kvm=1', args)
 
     def test_lock_prevents_concurrent_runs(self):
         import fcntl

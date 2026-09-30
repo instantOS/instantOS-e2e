@@ -36,7 +36,8 @@ live-setup completion. It includes forensic dumps used by [isotests.md](../isote
 UEFI runs boot the default entry and check the desktop visually; serial checks
 need a systemd-boot menu needle and editor flow before they can run on UEFI.
 
-All diagnostics accept `--kvm` and the shared overrides `QEMUCPUS`, `QEMURAM`,
+Diagnostics use KVM automatically when available. `--kvm` requires it and
+`--tcg` forces emulation. All diagnostics accept the shared overrides `QEMUCPUS`, `QEMURAM`,
 `HDDSIZEGB`, and `STORAGE_KEEP_FREE_GB` (names are case insensitive).
 `liveiso` additionally accepts `UEFI=1`. Other overrides are rejected.
 Disk diagnostics can use `PASSWORD=...` for a preserved disk with a different

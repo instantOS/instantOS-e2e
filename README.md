@@ -23,7 +23,8 @@ records the product baseline and the latest Arch chroot-guard failure.
 Requirements: Docker, Bash 4.3+, Python 3.11+, `flock`, and an instantCLI checkout
 (default `../instantCLI`). Disk conversion also needs `qemu-img`. Host image
 building needs `sfdisk`, `mkfs.ext4`, `e2fsck`, and passwordless sudo for exporting
-root-owned files. TCG works without KVM; `--kvm` enables hardware acceleration.
+root-owned files. KVM is used automatically when `/dev/kvm` is usable. Otherwise the runners
+use TCG; `--tcg` forces emulation and `--kvm` requires acceleration.
 
 Put the Arch ISO at `~/e2e-media/archlinux-x86_64.iso`. Put a published offline
 ISO at `~/e2e-media/instantos-offline-latest.iso`, or select a local build

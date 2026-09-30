@@ -5,15 +5,16 @@ REPO_ROOT=$(cd "$(dirname "$0")/.." && pwd)
 . "$REPO_ROOT/tools/lib/isotovideo.sh"
 . "$REPO_ROOT/tools/lib/fixtures.sh"
 . "$REPO_ROOT/tools/lib/arguments.sh"
+. "$REPO_ROOT/tools/lib/acceleration.sh"
 case "${1:-}" in
     bootcap|verifydisk|liveiso) HARNESS=$1; shift ;;
     *) echo 'Usage: tools/run-diagnostic.sh bootcap|verifydisk DISK.raw [OPTIONS] [VAR=VALUE ...]' >&2
        echo '       tools/run-diagnostic.sh liveiso [--offline] [--kvm] [VAR=VALUE ...]' >&2; exit 2 ;;
 esac
-MOUNTS=() DOCKER_ARGS=()
+MOUNTS=() DOCKER_ARGS=() ACCELERATION=auto
 declare -A VARS=(
     [distri]=arch [version]=202609 [QEMUCPUS]=8 [QEMURAM]=4096
-    [HDDSIZEGB]=20 [qemu_no_kvm]=1
+    [HDDSIZEGB]=20
     [NEEDLES_DIR]=/casedir/needles [E2E_PROFILE]=minimal [E2E_FLOW]=live
     [E2E_TARGET_DISK]=/dev/vda
 )
@@ -35,7 +36,8 @@ if json.load(sys.stdin)["format"] != "raw":
 fi
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --kvm) DOCKER_ARGS+=(--device /dev/kvm); unset 'VARS[qemu_no_kvm]' ;;
+        --kvm) ACCELERATION=kvm ;;
+        --tcg) ACCELERATION=tcg ;;
         --offline) VARS[E2E_FLOW]=offline; VARS[OFFLINE_SUT]=1 ;;
         --profile)
             shift; [ "$#" -gt 0 ] || { echo '--profile needs a value' >&2; exit 2; }
@@ -48,6 +50,7 @@ while [ "$#" -gt 0 ]; do
     esac
     shift
 done
+configure_acceleration "$ACCELERATION" VARS DOCKER_ARGS
 VARS[PASSWORD]=${VARS[PASSWORD]:-$(fixture_password "${VARS[E2E_PROFILE]}")}
 if [ "$HARNESS" = liveiso ]; then
     E2E_MEDIA_DIR=${E2E_MEDIA_DIR:-$HOME/e2e-media}

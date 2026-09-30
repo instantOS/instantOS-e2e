@@ -15,7 +15,8 @@ Usage: ./run.sh [--flow live|offline|host-arch|host-ubuntu] [OPTIONS] [VAR=VALUE
   --full           install and verify (default)
   --profile NAME   minimal (default), full, encrypted; host flows require minimal
   --release        published installer via install.sh (live flow only)
-  --kvm            hardware acceleration (default: TCG)
+  --kvm            require KVM (default: use KVM when available)
+  --tcg            force software emulation
   -h, --help       show help
 
 Environment:
@@ -32,7 +33,7 @@ set QEMU tuning variables, e.g. QEMUCPUS=4. Scenario and credential variables
 are owned by the suite. See README.md for requirements and diagnostic commands.
 HELP
 }
-FLOW=live MODE=full PROFILE=minimal RELEASE=0 KVM=0
+FLOW=live MODE=full PROFILE=minimal RELEASE=0 ACCELERATION=auto
 PASSTHROUGH=()
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -43,7 +44,8 @@ while [ "$#" -gt 0 ]; do
         --smoke) MODE=smoke ;;
         --full) MODE=full ;;
         --release) RELEASE=1 ;;
-        --kvm) KVM=1 ;;
+        --kvm) ACCELERATION=kvm ;;
+        --tcg) ACCELERATION=tcg ;;
         -h|--help) usage; exit 0 ;;
         *=*) PASSTHROUGH+=("$1") ;;
         *) echo "Unknown argument: $1 (see --help)" >&2; exit 2 ;;
@@ -59,6 +61,7 @@ if [ "$RELEASE" -eq 1 ] && [ "$FLOW" != live ]; then
     echo '--release requires --flow live' >&2; exit 2
 fi
 . "$REPO_ROOT/tools/lib/arguments.sh"
+. "$REPO_ROOT/tools/lib/acceleration.sh"
 for kv in "${PASSTHROUGH[@]}"; do
     validate_override install "$kv" || exit $?
 done
@@ -120,7 +123,7 @@ else
     MOUNTS+=(-v "$E2E_MEDIA_DIR:/media:ro")
 fi
 DOCKER_ARGS=()
-if [ "$KVM" -eq 1 ]; then DOCKER_ARGS+=(--device /dev/kvm); else VARS[qemu_no_kvm]=1; fi
+configure_acceleration "$ACCELERATION" VARS DOCKER_ARGS
 if [ "$MODE" = smoke ]; then VARS[E2E_SMOKE]=1; fi
 for kv in "${PASSTHROUGH[@]}"; do
     key=${kv%%=*}
