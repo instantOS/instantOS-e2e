@@ -53,6 +53,12 @@ sub login_installed_system {
 # Assertion suite every installed system must pass: boot identity, systemd
 # health, filesystem/swap layout, bootloader and the promised package set.
 sub assert_core_suite {
+    # Which disk the installed system lives on. Defaults to /dev/vda because
+    # that is what the live-ISO flow boots, and what the second verification
+    # stage sees: it boots the extracted target on its own, so the disk that
+    # was /dev/vdb during the install is /dev/vda there (run.sh passes
+    # E2E_TARGET_DISK explicitly for that reason).
+    my $disk = get_var('E2E_TARGET_DISK', '/dev/vda');
 
     # Boot identity
     assert_script_run('cat /etc/hostname | grep -qx ins-e2e-vm', 60);
@@ -69,9 +75,29 @@ sub assert_core_suite {
     assert_script_run('swapon --show=NAME --noheadings | grep -q .', 60);
     # fstab columns: <file system> <dir> <type> <options>
     assert_script_run('awk \'$2=="/" && $3=="ext4"\' /etc/fstab | grep -q .', 60);
+    # The root really is on the disk we installed to. Without this an install
+    # that silently landed on the wrong device would still pass every other
+    # check in this suite.
+    #
+    # Resolved through the device stack rather than string-matched: an
+    # encrypted install puts / on a LUKS mapper over an LVM volume, so SOURCE
+    # is /dev/mapper/... and a `^$disk` match can never succeed. `lsblk -s`
+    # walks parents, so this asks the only question that matters — is $disk in
+    # the root filesystem's ancestry? — for a plain, an LUKS and an LVM root
+    # alike. The btrfs subvolume suffix findmnt appends is stripped first.
+    #
+    # `-p` (absolute paths) plus a suffix-anchored match, rather than `-r`
+    # (raw) plus an exact match: lsblk prefixes parent devices with box-drawing
+    # characters unless -r is given, and -r is the flag most likely to change
+    # under us. Anchoring on "/<name>$" is correct either way.
+    assert_script_run(
+        "findmnt -n -o SOURCE / | sed 's/\\[.*//' | xargs -r lsblk -snpo NAME | grep -q '$disk\$'",
+        60,
+        fail_message => "the running root filesystem is not on $disk"
+    );
 
     # Bootloader: GRUB stage 1 in the MBR + generated config with entries
-    assert_script_run('dd if=/dev/vda bs=512 count=1 2>/dev/null | tail -c +385 | head -c 4 | grep -q GRUB', 60);
+    assert_script_run("dd if=$disk bs=512 count=1 2>/dev/null | tail -c +385 | head -c 4 | grep -q GRUB", 60);
     assert_script_run('grep -q menuentry /boot/grub/grub.cfg', 60);
     assert_script_run('test -s /boot/grub/grub.cfg', 60);
 
@@ -85,6 +111,19 @@ sub assert_core_suite {
     # bluetooth stack (blueman is an optdepends of instantdepend now and is
     # added by the installer only when /sys/class/bluetooth shows an adapter).
     assert_script_run('! pacman -Q blueman bluez', 60);
+
+    # Offline installs (E2E_OFFLINE=1): the finish-time cleanup must have
+    # removed every bundle reference, the target must keep a working
+    # network mirrorlist, and the [instant] repo must be configured with
+    # its unsigned-packages SigLevel (Phase 3 acceptance, offlineiso.md).
+    if (get_var('E2E_OFFLINE')) {
+        assert_script_run('! grep -ri "file://" /etc/pacman.conf /etc/pacman.d/', 60,
+            fail_message => 'file:// bundle references survived the offline cleanup');
+        assert_script_run('grep -q "^Server" /etc/pacman.d/mirrorlist', 60,
+            fail_message => 'no network server left in the target mirrorlist');
+        assert_script_run('grep -q "^\[instant\]" /etc/pacman.conf', 60);
+        assert_script_run('grep -A2 "^\[instant\]" /etc/pacman.conf | grep -q "Optional TrustAll"', 60);
+    }
 }
 
 1;

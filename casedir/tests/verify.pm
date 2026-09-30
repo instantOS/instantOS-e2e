@@ -14,6 +14,10 @@ use installed_base qw(login_installed_system assert_core_suite);
 
 sub run {
     my $profile = get_var('E2E_PROFILE', 'minimal');
+    # Which disk the install targeted. /dev/vda for the live-ISO flow and for
+    # the diag/verifydisk harness; /dev/vdb for the --host-* flows, where the
+    # install lands on the second disk of the machine it ran on.
+    my $disk = get_var('E2E_TARGET_DISK', '/dev/vda');
 
     # Encrypted installs boot through two passphrase prompts: GRUB
     # cryptodisk unlock (nothing can be themed there — GRUB has not read any
@@ -63,13 +67,18 @@ sub run {
         assert_script_run('grep -q "GRUB_ENABLE_CRYPTODISK=y" /etc/default/grub', 60);
         assert_script_run('grep -q "rd.luks" /boot/grub/grub.cfg', 60);
         assert_script_run('grep -q "^HOOKS=.*sd-encrypt" /etc/mkinitcpio.conf', 60);
-        assert_script_run('lsblk -no TYPE /dev/vda2 | grep -q crypt', 60);
+        assert_script_run("lsblk -no TYPE $disk" . '2 | grep -q crypt', 60);
         # root must come from the mapper (LVM inside LUKS), not the raw device
         assert_script_run('findmnt -n -o SOURCE / | grep -q /dev/mapper/', 60);
     }
 
-    # Network actually works (slirp gateway answers)
-    assert_script_run('ping -c1 -W5 10.0.2.2', 120);
+    # Network actually works (slirp gateway answers). The offline scenario
+    # runs with NICTYPE=none — there is no gateway, and the absence of any
+    # file:// bundle reference (asserted in installed_base) is the
+    # network-related proof.
+    unless (get_var('E2E_OFFLINE')) {
+        assert_script_run('ping -c1 -W5 10.0.2.2', 120);
+    }
 
     record_info('verify', 'installed-system verification suite passed');
 }

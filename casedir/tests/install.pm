@@ -7,8 +7,11 @@ use testapi;
 
 sub run {
     # The real thing: no --dry-run. TCG emulation makes this slow (package
-    # extraction, mkinitcpio), so allow plenty of time.
-    my $ins_bin = get_var('E2E_RELEASE') ? '/usr/local/bin/ins' : '/tmp/ins';
+    # extraction, mkinitcpio), so allow plenty of time. Offline mode uses
+    # the shipped installer (/usr/local/bin/ins injected at ISO build time)
+    # and installs from the on-ISO bundle instead of the mirrors.
+    my $ins_bin = (get_var('E2E_RELEASE') || get_var('E2E_OFFLINE'))
+        ? '/usr/local/bin/ins' : '/tmp/ins';
     script_run("$ins_bin arch exec -f /tmp/questions.toml > /tmp/install.log 2>&1; echo \"INSTALL_RC=\$?\" >> /tmp/install.log", 10800);
 
     # Keep the logs as artifacts and dump the interesting bits to the serial
@@ -30,6 +33,18 @@ sub run {
 
     # The installer prints this at the very end of the post step.
     assert_script_run('grep -q "grub-install" /tmp/install.log', 60);
+
+    if (get_var('E2E_OFFLINE')) {
+        # The installer's own offline trace: bundle bound into the target,
+        # dotfiles snapshot copied, and the finish-time cleanup that must
+        # strip every file:// reference (Phase 3 acceptance, offlineiso.md).
+        assert_script_run('grep -q "Bound the offline bundle into the target" /tmp/install.log', 60,
+            fail_message => 'installer did not bind the offline bundle into the target');
+        assert_script_run('grep -q "Copied the offline dotfiles snapshot" /tmp/install.log', 60,
+            fail_message => 'installer did not copy the offline dotfiles snapshot');
+        assert_script_run('grep -q "Removed offline bundle references" /tmp/install.log', 60,
+            fail_message => 'finish-time cleanup never ran (file:// refs survive)');
+    }
 
     # Cleanly release the target filesystem like a user-initiated reboot
     # would. QEMU blockdevs use cache.no-flush=on, so a raw system_reset

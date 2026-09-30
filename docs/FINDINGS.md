@@ -445,3 +445,101 @@ helped: qemu-img-convert the casedir qcow2 disk, mount it, inspect
 (the hook embeds the theme reported by `plymouth-set-default-theme` at
 build time, so the conf must be written before the rebuild — the installer
 does this).
+
+## Non-live install characterisation
+
+The `--host-arch` / `--host-ubuntu` flows (`./run.sh --host-arch`) install
+instantOS onto a second disk while a real OS keeps running. The live ISO cannot
+exercise that path at all: there the running system *is* a RAM-backed archiso
+root, so the disk guard, the host-side state writes and the foreign-distro
+handling are all off the critical path. These flows put them back on it. The
+product-side analysis is instantCLI's `nonlive_install.md`; this section
+records what the harness asserts and, more importantly, **which asserts are red
+on purpose** — that distinction is easy to get backwards.
+
+Reference: instantCLI `dev` (`cb171a7e`) unless stated otherwise.
+
+### What the host must survive (`--host-arch`, green)
+
+`tests/host_install.pm` digests the host's own package-manager configuration
+before the run and diffs it after. An install from a running system must not
+reconfigure the system it ran from:
+
+| host path | before the non-live work | on `dev` |
+| --- | --- | --- |
+| `/etc/pacman.d/mirrorlist` | rewritten by the Base step with absolute paths | untouched — `PackageSource::Isolated` derives a private copy under `/run/ins-install` and writes the *target* copy |
+| `/etc/pacman.conf` | rewritten by `configure_host_pacman` | untouched |
+| `/etc/instant/questions.toml` | installer state written into the host's `/etc/instant` | untouched — the state root is `/run/ins-install` |
+| `/etc/instant/installdryrun` | a leaked force-dry-run flag would silently no-op every future install | never created off-ISO (`paths::dry_run_flag` is live-ISO-only) |
+
+These asserts are written as the **correct** behaviour, not as a snapshot of a
+past bug. They are red on a product that does not isolate its configuration and
+green on one that does. If one goes red, the product regressed — do not restore
+the old behaviour to make it pass.
+
+Two more asserts are worth naming because they are *not* about the host: `/mnt`
+must still be a real mount on `/dev/vdb` with a real `/etc` in it, and the
+installer's chroot hand-off binary must be **gone** from the target —
+`execution/mod.rs` deletes `/usr/bin/ins-install` at the end of a full install,
+so a target that still has it did not run to completion.
+
+### What is red on purpose (`--host-ubuntu`)
+
+`assert_ubuntu_refused` asserts the property a foreign distro needs: `ins` must
+bail out **before** it repartitions the disk it was pointed at. The product
+does not implement that on this code path.
+
+- The gate exists in `ins arch install` (`cli/commands/install.rs`: refuses
+  when `!profile.supports_installation()`, prints `unsupported_host_message`).
+- The flow drives `ins arch exec`, which has no such gate. It validates the
+  config, builds the plan and runs the Disk step — so `/dev/vdb` **is**
+  repartitioned on Ubuntu. The run only fails afterwards, in the Base step,
+  when `PackageSource` tries to read an `/etc/pacman.conf` that does not exist
+  there.
+
+So the `sfdisk`/`blkid` asserts fail. That is the point: they are the
+regression test for a real product gap, and they go green the moment `exec`
+grows the gate `install` already has. CI runs this flow with
+`continue-on-error` so the failure is published without masking a real
+regression in the other flows. **Do not invert them to match today's
+behaviour** — that would delete the only thing this flow is for.
+
+The one assert in that block that *does* pass today is the foreign-distro
+warning: it comes from the shared command dispatcher (`cli/commands/mod.rs`),
+which `exec` does go through.
+
+### Second-stage verification, and why the disk is booted twice
+
+After `power('reset')` the machine comes back up in the *host* OS: the target
+is on a disk the firmware was never told about (the host images contain no
+bootloader at all, they are direct-kernel-booted). So the install is proven out
+of band — `run.sh` flattens `casedir/raid/hd1` and boots it alone through
+`diag/verifydisk`, which runs the same `login_installed_system()` +
+`assert_core_suite()` as the main suite. There the target is `/dev/vda`, which
+is why that stage passes `E2E_TARGET_DISK=/dev/vda` explicitly.
+
+`host-ubuntu` is excluded from that stage: its contract is that nothing is
+installed, so there is no install to boot.
+
+### Gotchas worth keeping
+
+- `APPEND` must be a **single whitespace-free token** (`root=LABEL=…`).
+  os-autoinst's `gen_params` single-quotes an `-append` value containing
+  whitespace, the kernel receives the quote characters as part of the first
+  argument, and `root=` is not recognised — the guest lands in an initramfs
+  shell with no console. Consequences: no `console=`, no `net.ifnames=0`. Both
+  host images enable `serial-getty@hvc0` explicitly and match the NIC by
+  `Driver=virtio_net` in `10-e2e.network` rather than by the name `eth0`.
+- `HDD_N` backing files are opened `O_RDWR`, so the images must be bind-mounted
+  read-write. `/media` is read-only, hence the separate `/e2e` mount.
+- Image geometry: GPT reserves the last 33 sectors for its backup header and
+  partition array. A partition sized to end on the very last sector leaves no
+  room and `sfdisk` fails with `Invalid argument` — after `truncate` has
+  already produced a file, so the build dies leaving an image with no partition
+  table at all. `tools/mkhost-*.sh` reserve `GPT_RESERVE_MB=1` and assert the
+  partition end against the last usable sector.
+- `lsblk -s` walks a device's **parents**; that is what lets one root-device
+  assert work for a plain root, an LUKS mapper and an LVM volume alike. Match
+  with `grep -q '<dev>$'` rather than `grep -x` on the bare name: without `-r`,
+  `lsblk` prefixes parent lines with box-drawing characters, and `-r` is the
+  flag most likely to change under us.

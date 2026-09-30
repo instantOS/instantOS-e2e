@@ -4,9 +4,13 @@
 # Prepared running-OS host disk images for the --host-arch / --host-ubuntu
 # flows (tools/mkhost-arch.sh, tools/mkhost-ubuntu.sh). Large binaries built
 # from docker base images; never commit them — the builders are the source.
-/*.img
+# By default they land in $E2E_WORK_DIR/images (../e2e-work/images), i.e.
+# outside this repository; these patterns only bite if someone points
+# E2E_IMAGE_DIR at the checkout, which run.sh allows.
+*.img
 *.img.env
-hostimg-*/
+arch-host/
+ubuntu-host/
 
 # isotovideo runtime state, written into the directory the casedir runs from
 # (casedir/ for the main suite, diag/*/ for the offline harnesses —

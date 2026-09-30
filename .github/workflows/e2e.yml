@@ -1,8 +1,14 @@
 name: e2e
-run-name: "e2e: instantCLI ${{ inputs.product_ref || 'main' }} [${{ inputs.profile || 'minimal' }}]${{ inputs.smoke == true && ' (smoke)' || '' }}"
+run-name: "e2e: instantCLI ${{ inputs.product_ref || 'main' }} [${{ inputs.profile || 'minimal' }}][${{ github.event_name == 'schedule' && 'live+offline' || inputs.flow || 'live' }}]${{ inputs.smoke == true && ' (smoke)' || '' }}"
 on:
   schedule:
     # Nightly; TCG (no KVM on hosted runners) so the full install takes ~1 h.
+    # Every nightly runs two jobs in parallel on separate runners:
+    #   install-e2e   the online install, from the stock Arch ISO
+    #   offline-e2e   a networkless install, from the *published* instantOS
+    #                 offline ISO (Phase 3 acceptance, instantOS/offlineiso.md)
+    # The non-live flows need ~1.5 h under TCG and are only worth their cost
+    # on demand (workflow_dispatch).
     - cron: "40 2 * * *"
   workflow_dispatch:
     inputs:
@@ -10,8 +16,17 @@ on:
         description: "instantCLI ref to test (tag, branch or sha)"
         default: "main"
         type: string
+      flow:
+        description: "What to boot: the Arch ISO (online install), the published instantOS offline ISO (no NIC), or a running OS that installs onto a second disk"
+        type: choice
+        options:
+          - live
+          - offline
+          - host-arch
+          - host-ubuntu
+        default: live
       smoke:
-        description: "Smoke only (ISO boot + in-VM dry-run, ~5 min)"
+        description: "Smoke only (boot + in-VM dry-run, ~5 min)"
         type: boolean
         default: false
       profile:
@@ -32,11 +47,23 @@ concurrency:
 
 jobs:
   install-e2e:
-    name: ins arch install e2e (isotovideo, TCG)
+    # The offline install is its own job: different ISO, and it tests the
+    # published artifact instead of a checkout, so it needs no instantCLI
+    # build. This one covers the online install and the non-live flows.
+    if: github.event_name == 'schedule' || inputs.flow != 'offline'
+    name: ins arch install e2e (${{ inputs.flow || 'live' }}, isotovideo, TCG)
     runs-on: ubuntu-26.04
-    timeout-minutes: 150
+    timeout-minutes: 240
+    # host-ubuntu is red by design against instantCLI dev: it asserts that
+    # `ins arch exec` refuses a foreign distro *before* touching the target
+    # disk, and exec has no host-profile gate — only `ins arch install` has
+    # one, and this flow does not use it. Run it and publish the failure as
+    # the signal it is, rather than letting it mask a real regression in the
+    # other flows. See casedir/tests/host_install.pm and docs/FINDINGS.md.
+    continue-on-error: ${{ inputs.flow == 'host-ubuntu' }}
     env:
       E2E_MEDIA_DIR: ${{ github.workspace }}/e2e-media
+      E2E_WORK_DIR: ${{ github.workspace }}/e2e-work
       INSTANTCLI_DIR: ${{ github.workspace }}/instantCLI
     steps:
       - name: Checkout e2e suite
@@ -51,6 +78,9 @@ jobs:
 
       - name: Resolve current ISO checksum
         id: iso
+        # Only the live-ISO flow needs an ISO at all; the --host-* flows
+        # direct-boot a disk image with KERNEL/INITRD/APPEND.
+        if: (inputs.flow || 'live') == 'live'
         run: |
           SUM=$((curl -fsSL https://archlinux.org/iso/latest/sha256sums.txt 2>/dev/null || \
                  curl -fsSL https://geo.mirror.pkgbuild.com/iso/latest/sha256sums.txt) |
@@ -60,6 +90,7 @@ jobs:
 
       - name: Cache Arch ISO
         id: iso-cache
+        if: (inputs.flow || 'live') == 'live'
         uses: actions/cache@v4
         with:
           # Keyed by sha256: one download per ISO release, not per run.
@@ -68,7 +99,7 @@ jobs:
           key: archiso-${{ steps.iso.outputs.sum }}
 
       - name: Download and verify Arch ISO (cache miss only)
-        if: steps.iso-cache.outputs.cache-hit != 'true'
+        if: (inputs.flow || 'live') == 'live' && steps.iso-cache.outputs.cache-hit != 'true'
         run: |
           mkdir -p "$E2E_MEDIA_DIR"
           ISO="$E2E_MEDIA_DIR/archlinux-x86_64.iso"
@@ -80,10 +111,50 @@ jobs:
           echo "${{ steps.iso.outputs.sum }}  $TMP" | sha256sum -c -
           mv "$TMP" "$ISO"
 
+      # The non-live flows need a prepared running-OS disk image. It is built
+      # here from the docker base image (no ISO download, no loop/nbd) and
+      # cached as one file, so only the first run of a given build pays for it.
+      # To invalidate, bump the `hostimg-vN-` prefix in both cache steps below —
+      # there is no version variable inside the builders.
+      #
+      # The path must list the kernel directory as well as the image and the
+      # .env: `<stem>.*` matches arch-host.img and arch-host.env but NOT
+      # arch-host/, which is where vmlinuz and initrd.img live. Caching only the
+      # former makes every later run die in run.sh's "references ... but it does
+      # not exist" check.
+      - name: Restore cached host image
+        id: host-cache
+        if: (inputs.flow || 'live') != 'live'
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ${{ github.workspace }}/e2e-work/images/${{ inputs.flow == 'host-arch' && 'arch-host' || 'ubuntu-host' }}.*
+            ${{ github.workspace }}/e2e-work/images/${{ inputs.flow == 'host-arch' && 'arch-host' || 'ubuntu-host' }}/
+          key: hostimg-v2-${{ inputs.flow }}
+
+      - name: Build host image (${{ inputs.flow }})
+        if: (inputs.flow || 'live') != 'live' && steps.host-cache.outputs.cache-hit != 'true'
+        run: ./tools/mkhost-${{ inputs.flow == 'host-arch' && 'arch' || 'ubuntu' }}.sh
+
+      - name: Save host image to cache
+        if: (inputs.flow || 'live') != 'live' && steps.host-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ${{ github.workspace }}/e2e-work/images/${{ inputs.flow == 'host-arch' && 'arch-host' || 'ubuntu-host' }}.*
+            ${{ github.workspace }}/e2e-work/images/${{ inputs.flow == 'host-arch' && 'arch-host' || 'ubuntu-host' }}/
+          key: hostimg-v2-${{ inputs.flow }}
+
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
-          workdir: instantCLI
+          # The input is `workspaces`, not `workdir` (that is the actions-rs
+          # cargo spelling). The e2e suite at the workspace root has no
+          # Cargo.toml, so with the input ignored the action fell back to `.`
+          # and cached only $CARGO_HOME — every run rebuilt instantCLI from
+          # scratch. Root is resolved against GITHUB_WORKSPACE; the target dir
+          # defaults to <root>/target, which is where run.sh builds.
+          workspaces: instantCLI
           prefix-key: e2e-release
           # Save even when the e2e run fails: a nightly installer suite goes
           # red regularly, and a failed run must not leave the next one cold.
@@ -104,13 +175,120 @@ jobs:
         # Hosted runners have 4 vCPUs and no /dev/kvm: TCG only, hence the
         # generous job timeout. QEMUCPUS=4 matches the runner. run.sh builds
         # ins from INSTANTCLI_DIR (cached below).
-        run: ./run.sh QEMUCPUS=4 --profile ${{ inputs.profile || 'minimal' }} ${{ inputs.smoke == true && '--smoke' || '' }}
+        run: |
+          FLOW_FLAG=""
+          [ "${{ inputs.flow || 'live' }}" = live ] || FLOW_FLAG="--${{ inputs.flow }}"
+          ./run.sh $FLOW_FLAG QEMUCPUS=4 --profile ${{ inputs.profile || 'minimal' }} \
+            ${{ inputs.smoke == true && '--smoke' || '' }}
 
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: e2e-results
+          path: |
+            casedir/testresults/
+            casedir/ulogs/
+            diag/verifydisk/testresults/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # Networkless install from the instantOS offline ISO — the acceptance
+  # criterion of Phase 3 in instantOS/offlineiso.md: install, reboot, and no
+  # file:// pacman reference may survive on the target. QEMU gets no NIC at
+  # all (run.sh --offline -> OFFLINE_SUT), so a bundle gap cannot be papered
+  # over by the network.
+  offline-e2e:
+    if: github.event_name == 'schedule' || inputs.flow == 'offline'
+    name: ins arch offline install e2e (published ISO, no NIC, TCG)
+    runs-on: ubuntu-26.04
+    timeout-minutes: 240
+    env:
+      E2E_MEDIA_DIR: ${{ github.workspace }}/e2e-media
+      # SourceForge always serves the newest offline build from this one stable
+      # name (instantOS/iso/publish-sourceforge.py promotes latest/ atomically),
+      # so the file name never changes — the published sha256 identifies it.
+      E2E_ISO_NAME: instantos-offline-latest.iso
+      OFFLINE_ISO_URL: https://sourceforge.net/projects/instantos/files/offline/latest/instantos-offline-latest.iso/download
+      OFFLINE_ISO_SHA_URL: https://sourceforge.net/projects/instantos/files/offline/latest/instantos-offline-latest.iso.sha256/download
+      OFFLINE_BUILD_URL: https://sourceforge.net/projects/instantos/files/offline/latest/build.txt/download
+    steps:
+      - name: Checkout e2e suite
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # instantCLI is deliberately NOT checked out here: the unit under test is
+      # the published ISO, installer included — /usr/local/bin/ins is injected
+      # at ISO build time — so `product_ref` does not apply to this job.
+
+      - name: Free runner disk space
+        # ~4.3 GiB ISO plus a 20 GiB install target do not fit next to the
+        # preinstalled toolchains. Only non-node toolchains are removed:
+        # /opt/hostedtoolcache holds the node that the remaining JS actions
+        # (actions/cache, upload-artifact) run on.
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /usr/local/share/boost /usr/local/share/powershell
+          df -h /
+
+      - name: Resolve published offline ISO checksum
+        id: offline-iso
+        run: |
+          # "<sha256>  instantos-offline-latest.iso", published next to the ISO.
+          SUM=$(curl -fsSL --retry 5 --retry-connrefused --retry-delay 2 "$OFFLINE_ISO_SHA_URL" | awk '{print $1}')
+          [ "${#SUM}" -eq 64 ] || { echo "could not resolve offline ISO checksum" >&2; exit 1; }
+          echo "sum=$SUM" >> "$GITHUB_OUTPUT"
+          # Build id (build-<workflow run>-<attempt> in the instantOS repo) so a
+          # red nightly says which published build it was testing. Informational.
+          echo "testing instantOS offline build $(curl -fsSL --max-time 30 "$OFFLINE_BUILD_URL" 2>/dev/null || echo unknown)"
+          echo "sha256: $SUM"
+
+      - name: Cache instantOS offline ISO
+        id: offline-iso-cache
+        uses: actions/cache@v4
+        with:
+          # Keyed by the published sha256, same idea as the Arch ISO above: one
+          # download per published build instead of one per run, and a checksum
+          # check on every miss. The download is the slow part of this job
+          # (~4.3 GiB, minutes even on a fast link), so on the many nights
+          # where instantOS has not republished this is most of the runtime
+          # saved. Budget: the file is already-compressed data, so the entry
+          # stays ~4.3 GiB of the repository's 10 GiB cache limit; when
+          # instantOS publishes a new build the old entry is what gets evicted
+          # (GitHub also drops entries unused for 7 days).
+          path: ${{ env.E2E_MEDIA_DIR }}/instantos-offline-latest.iso
+          key: offlineiso-v1-${{ steps.offline-iso.outputs.sum }}
+
+      - name: Download and verify instantOS offline ISO (cache miss only)
+        if: steps.offline-iso-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "$E2E_MEDIA_DIR"
+          ISO="$E2E_MEDIA_DIR/$E2E_ISO_NAME"
+          TMP="$ISO.tmp"
+          # The /download path redirects to a SourceForge mirror; -L follows it.
+          # Download to a temp name and only move the verified file into place,
+          # so a truncated or corrupt fetch can never be cached or booted.
+          curl -fL --retry 5 --retry-connrefused --retry-delay 2 --progress-bar \
+            -o "$TMP" "$OFFLINE_ISO_URL"
+          echo "${{ steps.offline-iso.outputs.sum }}  $TMP" | sha256sum -c -
+          mv "$TMP" "$ISO"
+          ls -lh "$ISO"
+
+      - name: Run e2e suite (offline, no NIC)
+        # run.sh --offline switches the suite to the shipped ins on the ISO,
+        # types the questions fixture in over serial (no port 8000, no cargo
+        # build) and sets E2E_OFFLINE/OFFLINE_SUT.
+        run: |
+          ./run.sh --offline QEMUCPUS=4 --profile ${{ inputs.profile || 'minimal' }} \
+            ${{ inputs.smoke == true && '--smoke' || '' }}
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          # Distinct name: the online job uploads its own e2e-results, and
+          # artifact names must be unique within a run.
+          name: e2e-results-offline
           path: |
             casedir/testresults/
             casedir/ulogs/
