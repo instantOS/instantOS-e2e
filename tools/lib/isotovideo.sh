@@ -1,6 +1,6 @@
 # Common lifecycle for installer and diagnostic harnesses.
 # qemu-x86, pinned so backend/serial behavior changes only with a reviewed update.
-ISOTOVIDEO_IMAGE=registry.opensuse.org/devel/openqa/containers/isotovideo@sha256:1a7bb1a1304da94cf1b1b5ba5ae26081d3d2642e9fda2e717ea2bfe5ef5087e8
+ISOTOVIDEO_IMAGE=registry.opensuse.org/devel/openqa/containers/isotovideo@sha256:e872f96e97bd177da84851b1f0db4190602e7718e0c1f4137ec1a09562a836b0
 
 # One VM per checkout: main and diagnostics share needles, images and results.
 lock_suite() {
