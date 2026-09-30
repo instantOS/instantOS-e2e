@@ -16,6 +16,12 @@ args = sys.argv[1:]
 with open(os.environ['CALL_LOG'], 'a') as f:
     f.write(json.dumps([name, args]) + '\n')
 if name == 'cargo':
+    try:
+        os.fstat(8)
+    except OSError:
+        pass
+    else:
+        sys.exit('Cargo inherited the suite lock')
     target = pathlib.Path(os.environ['CARGO_TARGET_DIR']) / 'release/ins'
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(b'this checkouts installer')

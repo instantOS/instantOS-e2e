@@ -154,7 +154,8 @@ if [ "$INSTALLER" = checkout ]; then
     BUILD_TMPDIR=${TMPDIR:-$E2E_WORK_DIR/tmp}
     mkdir -p "$BUILD_TMPDIR"
     echo "Building ins from $INSTANTCLI_DIR" >&2
-    (cd "$INSTANTCLI_DIR" && TMPDIR="$BUILD_TMPDIR" cargo build --release --bin ins)
+    # Keep the lock in the runner, not in build daemons such as sccache.
+    (cd "$INSTANTCLI_DIR" && TMPDIR="$BUILD_TMPDIR" cargo build --release --bin ins) 8>&-
     cp "$CARGO_TARGET_DIR/release/ins" assets/ins
     ASSET_PORT_FILE=$(mktemp)
     python3 "$REPO_ROOT/tools/serve-assets.py" "$REPO_ROOT/assets" >"$ASSET_PORT_FILE" 2>/dev/null &
