@@ -7,6 +7,7 @@ for script in run.sh tools/*.sh tools/lib/*.sh tools/host/*.sh assets/*.sh tests
     bash -n "$script"
 done
 python3 -m unittest discover -s tests -v
+resolve_isotovideo
 docker run --rm -v "$REPO_ROOT:/repo:ro" -v "$REPO_ROOT/assets:/tests/assets:ro" \
     -w /repo --entrypoint bash "$ISOTOVIDEO_IMAGE" -c '
     set -e

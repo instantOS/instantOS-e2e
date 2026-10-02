@@ -1,6 +1,21 @@
 # Common lifecycle for installer and diagnostic harnesses.
-# qemu-x86, pinned so backend/serial behavior changes only with a reviewed update.
-ISOTOVIDEO_IMAGE=registry.opensuse.org/devel/openqa/containers/isotovideo@sha256:e872f96e97bd177da84851b1f0db4190602e7718e0c1f4137ec1a09562a836b0
+# Upstream retains rolling tags, not historical digests. Resolve once per process
+# so installation and standalone verification use the same backend even if the
+# tag changes during a run. A failed pull is fatal, never a stale-cache fallback.
+ISOTOVIDEO_TAG=registry.opensuse.org/devel/openqa/containers/isotovideo:qemu-x86
+ISOTOVIDEO_IMAGE=''
+
+resolve_isotovideo() {
+    [ -z "$ISOTOVIDEO_IMAGE" ] || return 0
+    docker pull "$ISOTOVIDEO_TAG" || return
+    local resolved
+    resolved=$(docker image inspect --format '{{.Id}}' "$ISOTOVIDEO_TAG") || return
+    [[ $resolved =~ ^sha256:[0-9a-f]{64}$ ]] || {
+        echo 'Could not resolve isotovideo image ID' >&2; return 1;
+    }
+    docker image inspect --format 'isotovideo: {{json .RepoDigests}} ({{.Id}})' "$resolved" || return
+    ISOTOVIDEO_IMAGE=$resolved
+}
 
 # One VM per checkout: main and diagnostics share needles, images and results.
 lock_suite() {
@@ -41,6 +56,7 @@ run_isotovideo() {
     local -n stage_vars=$vars_name stage_mounts=$mounts_name
     local rc=0 key
     local -a args=(casedir=/tests)
+    resolve_isotovideo || return
     reset_harness "$harness" || return
     for key in "${!stage_vars[@]}"; do args+=("$key=${stage_vars[$key]}"); done
     docker run --rm -w /tests --network host "${DOCKER_ARGS[@]}" \

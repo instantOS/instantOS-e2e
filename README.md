@@ -82,8 +82,11 @@ scenario, boot-device, networking and credentials are selected by the runner.
 
 The runner holds a checkout lock for the entire run. Each stage clears its
 runtime state, launches the same container and returns artifact ownership,
-including on test failure. The harness container digest is pinned in
-`tools/lib/isotovideo.sh`; update it together with a validated backend change.
+including on test failure. The harness uses upstream’s rolling `qemu-x86`
+container from `tools/lib/isotovideo.sh`. Each invocation pulls it once, logs its registry digest
+and runs all stages with the resolved local image ID. Historical upstream
+digests disappear; they are not reproducible dependency pins. Backend changes
+are checked by the harness tests and nightly full installs.
 A full host-Arch run always converts and verifies
 the target; conversion or verification failure makes the run fail.
 
@@ -149,7 +152,7 @@ and [isotests.md](isotests.md) preserve research history. Read
 
 This checks Bash/Perl syntax, runner orchestration with simulated external
 commands, and guest-helper contracts with a fake VM API. Perl runs in the same
-pinned harness container as the VM tests.
+upstream harness container as the VM tests.
 
 CI runs online and published-offline installs nightly; manual dispatch selects
 one flow. `product_ref` applies to checkout flows only. ISO caches use published

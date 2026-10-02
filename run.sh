@@ -169,6 +169,9 @@ if [ "$INSTALLER" = checkout ]; then
     VARS[E2E_ASSET_URL]="http://10.0.2.2:$port"
 fi
 
+# Resolve the backend before deleting any previous VM artifacts.
+resolve_isotovideo
+
 # Clear the planned second stage even if the installation stage fails.
 if [ "$FLOW" = host-arch ] && [ "$MODE" = full ]; then
     reset_harness "$REPO_ROOT/diag/verifydisk"

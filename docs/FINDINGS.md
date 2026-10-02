@@ -753,3 +753,33 @@ Evidence is retained in `../e2e-work/results/encrypted-final-full/`. All these
 runs selected KVM automatically. Final local checks passed 37 Python tests,
 48 Perl assertions, Bash/Perl syntax, shellcheck, actionlint and Rust formatting;
 instantCLI passed `cargo check` and 1,384 unit tests (one ignored).
+
+## October 2026 nightly dependency failure
+
+Both scheduled runs on October 1 and 2 failed in `Check harness`, in both the
+live and offline jobs. The 37 Python tests passed; Docker then returned exit
+125 because the pinned isotovideo manifest
+`sha256:e872f96e97bd177da84851b1f0db4190602e7718e0c1f4137ec1a09562a836b0`
+was no longer available. No installer ran and no VM booted. The ten preceding
+scheduled runs were green. Logs were retrieved using `gh run view --log-failed`:
+
+- https://github.com/instantOS/instantOS-e2e/actions/runs/36842353851
+- https://github.com/instantOS/instantOS-e2e/actions/runs/36986855952
+
+Replacing one disappearing digest with another had already failed in September.
+The harness now pulls the published `qemu-x86` tag once per invocation, records
+its registry digest and local image ID, then launches all stages using that ID.
+This deliberately follows upstream backend updates instead of promising stable
+historical images that the upstream registry does not retain. Pull and image
+resolution failures remain fatal, and resolution precedes artifact cleanup.
+Installation, preservation and installed-system assertions are unchanged.
+
+The replacement fetched on October 2 had registry digest
+`sha256:fb25587c622e17ef2b6d5b4f1bc009077b020ef800415ebed55a60c9cbaab110`.
+Bash/Perl syntax checks, 40 Python tests and 48 Perl guest-helper assertions
+passed with this image.
+
+Local full VM validation was stopped during the release build at the user's
+request; no VM had started. Full live/offline installation validation is left
+to CI. The checks above cover dependency resolution and harness contracts,
+not a completed installation with the updated backend.

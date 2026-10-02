@@ -37,6 +37,10 @@ elif name == 'qemu-img':
     if args[0] == 'info': print('{"format":"raw"}')
     else: pathlib.Path(args[-1]).write_bytes(b'raw disk')
 elif name == 'docker':
+    if args[0] == 'pull': sys.exit(int(os.environ.get('PULL_RC', '0')))
+    if args[:2] == ['image', 'inspect']:
+        print(os.environ.get('IMAGE_ID', 'sha256:' + 'a' * 64))
+        sys.exit(0)
     harness = pathlib.Path(next(args[i+1].removesuffix(':/tests')
         for i, a in enumerate(args[:-1]) if a == '-v' and args[i+1].endswith(':/tests')))
     # The launcher must clear stale results and variables before *each* stage.
@@ -107,10 +111,11 @@ class RunnerTests(unittest.TestCase):
                                harness, *map(str, args)], env={**self.env, **env},
                               text=True, capture_output=True, timeout=20)
 
-    def calls(self, command):
+    def calls(self, command, all_calls=False):
         log = self.base / 'calls.jsonl'
         return [args for name, args in map(json.loads, log.read_text().splitlines())
-                if name == command] if log.exists() else []
+                if name == command
+                and (command != 'docker' or all_calls or args[0] == 'run')] if log.exists() else []
 
     def stale(self, directory):
         directory = self.repo / directory
@@ -134,6 +139,29 @@ class RunnerTests(unittest.TestCase):
         self.assertFalse(any(a.startswith(('KERNEL=', 'INITRD=', 'APPEND=', 'iso=')) for a in launches[1]))
         self.assertEqual(len(self.calls('cargo')), 1)
         self.assertEqual(len(self.calls('qemu-img')), 1)
+
+    def test_backend_is_resolved_once_for_both_stages(self):
+        result = self.run_suite('--flow', 'host-arch')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        pulls = [args for args in self.calls('docker', all_calls=True) if args[0] == 'pull']
+        self.assertEqual(pulls, [['pull', 'registry.opensuse.org/devel/openqa/containers/isotovideo:qemu-x86']])
+        for launch in self.calls('docker'):
+            self.assertIn('sha256:' + 'a' * 64, launch)
+
+    def test_backend_pull_failure_preserves_previous_artifacts(self):
+        self.stale('casedir')
+        self.stale('diag/verifydisk')
+        result = self.run_suite('--flow', 'host-arch', PULL_RC='125')
+        self.assertEqual(result.returncode, 125, result.stderr)
+        self.assertFalse(self.calls('docker'))
+        self.assertTrue((self.repo / 'casedir/testresults/stale').exists())
+        self.assertTrue((self.repo / 'diag/verifydisk/testresults/stale').exists())
+
+    def test_invalid_backend_image_id_prevents_launch(self):
+        result = self.run_suite('--flow', 'offline', IMAGE_ID='')
+        self.assertNotEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Could not resolve isotovideo image ID', result.stderr)
+        self.assertFalse(self.calls('docker'))
 
     def test_host_smoke_and_ubuntu_never_boot_a_second_stage(self):
         for args in (('--flow', 'host-arch', '--smoke'), ('--flow', 'host-ubuntu')):
