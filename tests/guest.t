@@ -65,6 +65,17 @@ run_dry_run();
 like($testapi::commands[0], qr/curl .* -o \/tmp\/install.sh/, 'release download has its own assertion');
 like($testapi::commands[1], qr/bash \/tmp\/install.sh/, 'release script executes only after download');
 ok(grep($_ eq '/tmp/dryrun.log', @testapi::uploads), 'dry-run evidence is uploaded');
+# A binary that cannot start writes nothing to its own log but a status, so the
+# status has to be judged before anything else gets to report on its behalf.
+my ($judged) = grep { $testapi::commands[$_] =~ /DRYRUN_RC=0/ } 0..$#testapi::commands;
+my ($probed) = grep { $testapi::commands[$_] =~ /arch list/ } 0..$#testapi::commands;
+ok(defined $judged && defined $probed && $judged < $probed,
+    'the dry-run status is judged before the binary is probed');
+unlike($testapi::commands[$probed], qr/\|/,
+    'the probe keeps its own status instead of piping into grep');
+ok(grep($_ eq '/tmp/cpuinfo.txt', @testapi::uploads)
+    && grep($_ eq '/tmp/dmesg-tail.txt', @testapi::uploads),
+    'the emulated CPU and the kernel log tail are uploaded');
 
 {
     package host_install;

@@ -156,6 +156,27 @@ if [ "$INSTALLER" = checkout ]; then
     echo "Building ins from $INSTANTCLI_DIR" >&2
     # Keep the lock in the runner, not in build daemons such as sccache.
     (cd "$INSTANTCLI_DIR" && TMPDIR="$BUILD_TMPDIR" cargo build --release --bin ins) 8>&-
+    # Record what produced the binary under test. A failure that depends on the
+    # toolchain or on the build host (an instruction the guest CPU lacks, a
+    # library the medium dropped) is otherwise impossible to attribute: the run
+    # log names neither the product commit nor the compiler that built it.
+    # A tool that is not installed is reported as such rather than putting a
+    # shell error in the middle of the block.
+    tool_version() {
+        if command -v "$1" >/dev/null 2>&1; then
+            "$1" --version 2>&1 | head -1
+        else
+            echo 'unavailable'
+        fi
+    }
+    {
+        echo "instantCLI $(git -C "$INSTANTCLI_DIR" rev-parse HEAD 2>/dev/null || echo unknown)"
+        echo "build host $(uname -srm)"
+        echo "rustc $(tool_version rustc)"
+        echo "cc $(tool_version "${CC:-cc}")"
+        echo "cmake $(tool_version cmake)"
+        echo "libc $(tool_version ldd)"
+    } >&2
     cp "$CARGO_TARGET_DIR/release/ins" assets/ins
     ASSET_PORT_FILE=$(mktemp)
     python3 "$REPO_ROOT/tools/serve-assets.py" "$REPO_ROOT/assets" >"$ASSET_PORT_FILE" 2>/dev/null &
