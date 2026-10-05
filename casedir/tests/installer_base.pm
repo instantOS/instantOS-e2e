@@ -85,6 +85,24 @@ sub prepare_installer {
     }
 }
 
+# What the guest saw, published whenever the installer misbehaves. A binary that
+# cannot start at all (an unsupported instruction, a loader error) writes nothing
+# to its own log, so its version, the emulated CPU and the kernel's report of the
+# fatal signal are the only evidence there is.
+sub collect_installer_evidence {
+    my $binary = installer_binary();
+    # Grouped so a missing binary is recorded rather than fatal; the dry run
+    # decides whether that matters.
+    script_run('{ uname -a; ' . $binary . ' --version; echo "VERSION_RC=$?"; } '
+        . '> /tmp/ins-version.txt 2>&1', 120);
+    script_run('cp -f /proc/cpuinfo /tmp/cpuinfo.txt', 60);
+    script_run('dmesg 2>/dev/null | grep -iE "trap|illegal|general protection|siginfo" '
+        . '> /tmp/kernel-traps.txt || true', 60);
+    collect_log('/tmp/ins-version.txt');
+    collect_log('/tmp/cpuinfo.txt');
+    collect_log('/tmp/kernel-traps.txt');
+}
+
 sub run_dry_run {
     if (get_var('E2E_INSTALLER', 'checkout') eq 'release') {
         # Download separately so a failed curl cannot be hidden by the pipeline.
@@ -98,11 +116,33 @@ sub run_dry_run {
     }
     collect_log('/tmp/dryrun.log');
     script_run('tail -n 40 /tmp/dryrun.log');
-    assert_script_run(installer_binary() . ' arch list | grep -q Keymap', 120);
+    collect_installer_evidence();
+    # This is the installer actually working, so judge it before anything else
+    # runs. Otherwise a binary that dies at startup is reported as whatever runs
+    # next, which is how a crashing installer was once reported as a failing
+    # step listing. The status has to reach the run log: the uploaded log is not
+    # part of it.
+    my $status = script_output('sed -n "s/^DRYRUN_RC=//p" /tmp/dryrun.log | tail -1',
+        30, proceed_on_failure => 1);
+    $status = 'not reported' unless defined $status && $status =~ /\A\d+\z/;
+    assert_script_run('grep -qx "DRYRUN_RC=0" /tmp/dryrun.log', 60,
+        fail_message => "installer dry run exited with status $status");
+    # Cheapest proof that the binary under test runs at all. Keep its output and
+    # status instead of piping into grep: a crashed installer then reports its
+    # own status rather than grep's "no match".
+    my $binary = installer_binary();
+    script_run("$binary arch list > /tmp/arch-list.txt 2>&1; "
+        . 'echo "LIST_RC=$?" >> /tmp/arch-list.txt', 120);
+    collect_log('/tmp/arch-list.txt');
+    script_run('cat /tmp/arch-list.txt');
+    assert_script_run('grep -qx "LIST_RC=0" /tmp/arch-list.txt '
+        . '&& grep -q Keymap /tmp/arch-list.txt', 60,
+        fail_message => 'ins arch list did not print the wizard steps');
 }
 
+# The dry run's exit status is asserted in run_dry_run, before anything else
+# runs, so that an installer which never started cannot reach these checks.
 sub assert_dry_run {
-    assert_script_run('grep -qx "DRYRUN_RC=0" /tmp/dryrun.log', 60);
     assert_script_run('grep -E "useradd .*tester" /tmp/dryrun.log', 30);
     assert_script_run('grep -E "pacstrap .*linux" /tmp/dryrun.log', 30);
     assert_script_run('grep -q "grub-install" /tmp/dryrun.log', 30);

@@ -154,6 +154,18 @@ if [ "$INSTALLER" = checkout ]; then
     mkdir -p "$BUILD_TMPDIR"
     echo "Building ins from $INSTANTCLI_DIR" >&2
     (cd "$INSTANTCLI_DIR" && TMPDIR="$BUILD_TMPDIR" cargo build --release --bin ins)
+    # Record what produced the binary under test. A failure that depends on the
+    # toolchain or on the build host (an instruction the guest CPU lacks, a
+    # library the medium dropped) is otherwise impossible to attribute: the run
+    # log names neither the product commit nor the compiler that built it.
+    {
+        echo "instantCLI $(git -C "$INSTANTCLI_DIR" rev-parse HEAD 2>/dev/null || echo unknown)"
+        echo "build host $(uname -srm)"
+        echo "rustc $(rustc --version 2>&1 | head -1)"
+        echo "cc $(${CC:-cc} --version 2>&1 | head -1)"
+        echo "cmake $(cmake --version 2>&1 | head -1)"
+        echo "libc $(ldd --version 2>&1 | head -1)"
+    } >&2
     cp "$CARGO_TARGET_DIR/release/ins" assets/ins
     ASSET_PORT_FILE=$(mktemp)
     python3 "$REPO_ROOT/tools/serve-assets.py" "$REPO_ROOT/assets" >"$ASSET_PORT_FILE" 2>/dev/null &
