@@ -158,13 +158,22 @@ if [ "$INSTALLER" = checkout ]; then
     # toolchain or on the build host (an instruction the guest CPU lacks, a
     # library the medium dropped) is otherwise impossible to attribute: the run
     # log names neither the product commit nor the compiler that built it.
+    # A tool that is not installed is reported as such rather than putting a
+    # shell error in the middle of the block.
+    tool_version() {
+        if command -v "$1" >/dev/null 2>&1; then
+            "$1" --version 2>&1 | head -1
+        else
+            echo 'unavailable'
+        fi
+    }
     {
         echo "instantCLI $(git -C "$INSTANTCLI_DIR" rev-parse HEAD 2>/dev/null || echo unknown)"
         echo "build host $(uname -srm)"
-        echo "rustc $(rustc --version 2>&1 | head -1)"
-        echo "cc $(${CC:-cc} --version 2>&1 | head -1)"
-        echo "cmake $(cmake --version 2>&1 | head -1)"
-        echo "libc $(ldd --version 2>&1 | head -1)"
+        echo "rustc $(tool_version rustc)"
+        echo "cc $(tool_version "${CC:-cc}")"
+        echo "cmake $(tool_version cmake)"
+        echo "libc $(tool_version ldd)"
     } >&2
     cp "$CARGO_TARGET_DIR/release/ins" assets/ins
     ASSET_PORT_FILE=$(mktemp)

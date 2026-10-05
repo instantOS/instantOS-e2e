@@ -64,8 +64,8 @@ ok(defined $judged && defined $probed && $judged < $probed,
 unlike($testapi::commands[$probed], qr/\|/,
     'the probe keeps its own status instead of piping into grep');
 ok(grep($_ eq '/tmp/cpuinfo.txt', @testapi::uploads)
-    && grep($_ eq '/tmp/kernel-traps.txt', @testapi::uploads),
-    'the emulated CPU and the kernel trap report are uploaded');
+    && grep($_ eq '/tmp/dmesg-tail.txt', @testapi::uploads),
+    'the emulated CPU and the kernel log tail are uploaded');
 
 {
     package host_install;

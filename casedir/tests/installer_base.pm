@@ -87,8 +87,8 @@ sub prepare_installer {
 
 # What the guest saw, published whenever the installer misbehaves. A binary that
 # cannot start at all (an unsupported instruction, a loader error) writes nothing
-# to its own log, so its version, the emulated CPU and the kernel's report of the
-# fatal signal are the only evidence there is.
+# to its own log, so its version, the emulated CPU and the kernel's own report of
+# the fatal signal are the only evidence there is.
 sub collect_installer_evidence {
     my $binary = installer_binary();
     # Grouped so a missing binary is recorded rather than fatal; the dry run
@@ -96,11 +96,14 @@ sub collect_installer_evidence {
     script_run('{ uname -a; ' . $binary . ' --version; echo "VERSION_RC=$?"; } '
         . '> /tmp/ins-version.txt 2>&1', 120);
     script_run('cp -f /proc/cpuinfo /tmp/cpuinfo.txt', 60);
-    script_run('dmesg 2>/dev/null | grep -iE "trap|illegal|general protection|siginfo" '
-        . '> /tmp/kernel-traps.txt || true', 60);
+    # The tail of the kernel log, not a keyword filter: the report for a fatal
+    # signal is terse and its wording is a kernel implementation detail
+    # (`np0 stitch: 0/MxS` matches no obvious keyword), and it is always among
+    # the last messages before the harness looks.
+    script_run('dmesg 2>/dev/null | tail -80 > /tmp/dmesg-tail.txt || true', 60);
     collect_log('/tmp/ins-version.txt');
     collect_log('/tmp/cpuinfo.txt');
-    collect_log('/tmp/kernel-traps.txt');
+    collect_log('/tmp/dmesg-tail.txt');
 }
 
 sub run_dry_run {
