@@ -1,10 +1,8 @@
 # Encrypted configuration for `ins arch exec` e2e tests.
 # Full profile (instantOS packages + Plymouth) plus LUKS encryption.
 #
-# The installer configures GRUB cryptodisk (GRUB_ENABLE_CRYPTODISK=y) and
-# sd-encrypt with an LVM volume inside the LUKS container, so /boot lives on
-# the encrypted partition: at boot the VM asks for the passphrase TWICE
-# (once for GRUB, once for the initramfs) — tests/verify.pm handles that.
+# /boot is unencrypted and contains all GRUB assets. Linux sd-encrypt unlocks
+# the LVM-on-LUKS2 root container with one passphrase prompt.
 #
 # Hand-authored configs omit wizard provenance; `ins arch exec` still
 # validates their answers before execution.
@@ -24,7 +22,8 @@ Timezone = "Europe/Berlin"
 Locale = "en_US.UTF-8"
 Kernel = "linux"
 DesktopEnvironment = "none/tty"
-RootFilesystem = "ext4"
+RootFilesystem = "btrfs"
+BtrfsCompression = "zstd"
 UseEncryption = "yes"
 UsePlymouth = "yes"
 LogUpload = "no"

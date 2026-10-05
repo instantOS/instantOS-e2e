@@ -7,15 +7,11 @@ use testapi;
 
 our @EXPORT_OK = qw(unlock_encrypted_system login_installed_system assert_core_suite verify_installed_system);
 
-# GRUB decryption can be slow even with KVM. Wait for each prompt so subsequent
-# password characters cannot be queued into the boot menu while GRUB decrypts.
+# GRUB reads unencrypted /boot. Only Linux unlocks the encrypted root.
 sub unlock_encrypted_system {
     my ($timeout) = @_;
     $timeout //= 900;
     my $password = get_required_var('ENCRYPTION_PASSWORD');
-    assert_screen 'grub-unlock', $timeout;
-    type_password($password);
-    send_key 'ret';
     assert_screen 'initramfs-unlock', $timeout;
     type_password($password);
     send_key 'ret';
@@ -27,8 +23,7 @@ sub unlock_encrypted_system {
 # (verifydisk.pm): the root password is the user password from the questions
 # file, provided via the PASSWORD var and set_password in main.pm. Assert
 # the Password: prompt before typing so the tty flush cannot eat the
-# password, and assert the shell prompt afterwards (it is colored, so a
-# needle rather than text matching).
+# password, and assert the root shell prompt before starting the serial getty.
 sub login_installed_system {
     my ($login_timeout) = @_;
     $login_timeout //= 900;
@@ -76,10 +71,15 @@ sub assert_core_suite {
     assert_script_run('systemctl is-active sshd', 60);
 
     # Filesystem + swap
-    assert_script_run('findmnt -n -o FSTYPE / | grep -qx ext4', 60);
+    my $filesystem = get_var('E2E_PROFILE', 'minimal') eq 'encrypted' ? 'btrfs' : 'ext4';
+    assert_script_run("findmnt -n -o FSTYPE / | grep -qx $filesystem", 60);
     assert_script_run('swapon --show=NAME --noheadings | grep -q .', 60);
     # fstab columns: <file system> <dir> <type> <options>
-    assert_script_run('awk \'$2=="/" && $3=="ext4"\' /etc/fstab | grep -q .', 60);
+    assert_script_run(q{awk '$2=="/" && $3=="} . $filesystem . q{"' /etc/fstab | grep -q .}, 60);
+    if ($filesystem eq 'btrfs') {
+        assert_script_run('findmnt -n -o OPTIONS / | grep -q "subvol=/@"', 60);
+        assert_script_run('findmnt -n -o OPTIONS /home | grep -q "subvol=/@home"', 60);
+    }
     # The root really is on the disk we installed to. Without this an install
     # that silently landed on the wrong device would still pass every other
     # check in this suite.
@@ -135,6 +135,7 @@ sub assert_core_suite {
 
 sub verify_installed_system {
     my ($login_timeout) = @_;
+    select_console 'user-console';
     my $profile = get_var('E2E_PROFILE', 'minimal');
     # Which disk the install targeted. /dev/vda for the live-ISO flow and for
     # the diag/verifydisk harness; /dev/vdb for the --host-* flows, where the
@@ -162,7 +163,9 @@ sub verify_installed_system {
         # lsinitcpio reads both the early microcode and compressed main archive.
         assert_script_run('lsinitcpio /boot/initramfs-linux.img | grep -q "plymouth/themes/instantos"', 120);
         assert_script_run('grep -q "^GRUB_THEME=" /etc/default/grub', 60);
-        assert_script_run('test -f /usr/share/grub/themes/instantos/theme.txt', 60);
+        assert_script_run('test -f /boot/grub/themes/instantos/theme.txt', 60);
+        assert_script_run(q{grep -Fxq 'GRUB_THEME="/boot/grub/themes/instantos/theme.txt"' /etc/default/grub}, 60);
+        assert_script_run('test -f /boot/grub/fonts/unicode.pf2', 60);
         # On failure dump what grub-mkconfig actually emitted: distinguishes
         # "theme never emitted" from "emitted but asset not loadable"
         # (00_header insmods png but not jpeg — the instantos theme's
@@ -172,7 +175,10 @@ sub verify_installed_system {
 
     # --- encrypted layout (encrypted profile) ----------------------------
     if ($profile eq 'encrypted') {
-        assert_script_run('grep -q "GRUB_ENABLE_CRYPTODISK=y" /etc/default/grub', 60);
+        assert_script_run('grep -q "GRUB_ENABLE_CRYPTODISK=n" /etc/default/grub', 60);
+        assert_script_run('! grep -q "cryptomount" /boot/grub/grub.cfg', 60);
+        assert_script_run("findmnt -n -o SOURCE /boot | grep -Fxq '$disk" . "1'", 60);
+        assert_script_run("cryptsetup luksDump $disk" . '2 | grep -q argon2id', 60);
         assert_script_run('grep -q "rd.luks" /boot/grub/grub.cfg', 60);
         assert_script_run('grep -q "^HOOKS=.*sd-encrypt" /etc/mkinitcpio.conf', 60);
         assert_script_run("lsblk -no TYPE $disk" . '2 | grep -q crypt', 60);

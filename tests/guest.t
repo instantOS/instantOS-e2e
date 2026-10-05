@@ -173,16 +173,15 @@ for my $flow ('live', 'offline') {
     @testapi::commands = ();
     installed_base::unlock_encrypted_system();
     is_deeply(\@testapi::commands, [
-        'screen:grub-unlock:900', 'password:encryption-only', 'key:ret',
         'screen:initramfs-unlock:900', 'password:encryption-only', 'key:ret',
-    ], 'each unlock prompt is detected before submitting its own fixture password');
-    for my $stage ('grub-unlock', 'initramfs-unlock') {
+    ], 'only the Linux unlock prompt receives the encryption password');
+    for my $stage ('initramfs-unlock') {
         @testapi::commands = ();
         local $testapi::fail_screen = $stage;
         my $ok = eval { installed_base::unlock_encrypted_system(120); 1 };
         ok(!$ok, "$stage timeout fails encrypted boot");
         like($@, qr/Screen timeout: $stage/, 'timeout identifies the unlock stage');
-        is(scalar(grep { /^password:/ } @testapi::commands), $stage eq 'grub-unlock' ? 0 : 1,
+        is(scalar(grep { /^password:/ } @testapi::commands), 0,
             'a missing prompt prevents further password submission');
         like($testapi::commands[-1], qr/:120$/, 'the prompt wait has a bounded timeout');
     }

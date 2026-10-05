@@ -55,8 +55,9 @@ E2E_ISO_NAME=instantos-YYYY.MM.DD-offline.iso ./run.sh --flow offline
 ```
 
 `minimal` is TTY-only, ext4, no encryption. `full` adds instantOS packages,
-Plymouth and GRUB themes. `encrypted` adds LUKS with `/boot` inside the
-container and verifies both GRUB and initramfs unlocking. Theme assertions
+Plymouth and GRUB themes. `encrypted` adds Btrfs on LUKS2/Argon2id with an unencrypted
+`/boot`, verifies a single initramfs unlock prompt and repeats verification
+after a normal reboot. GRUB assets stay on `/boot`. Theme assertions
 inspect the initramfs using `lsinitcpio`. Host flows require `minimal`; the
 runner derives their configuration from that fixture with `Disk = "/dev/vdb"`.
 

@@ -78,4 +78,5 @@ before changing host assertions:
   have been installed.
 - Full/encrypted profiles verify the whole theming chain, including the
   Plymouth theme inside the initramfs (`lsinitcpio`), not merely on root.
-  Encrypted runs also verify GRUB cryptodisk, sd-encrypt, and root-from-mapper.
+  Encrypted runs also verify unencrypted GRUB assets, absence of GRUB cryptomount,
+  Argon2id, sd-encrypt, and root-from-mapper.
